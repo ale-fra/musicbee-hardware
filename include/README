@@ -1,37 +1,25 @@
+# Header files
 
-This directory is intended for project header files.
+This folder contains the public headers for the firmware. The most
+relevant files for day-to-day configuration are:
 
-A header file is a file containing C declarations and macro definitions
-to be shared between several project source files. You request the use of a
-header file in your project source file (C, C++, etc) located in `src` folder
-by including it, with the C preprocessing directive `#include'.
+- `Config.h` – compile-time constants such as Wi-Fi credentials,
+  backend host and RFID reader wiring. New constants include the
+  `RfidHardwareType` enum, the `NFC_READER_TYPE` selector and the
+  default pin assignments for both MFRC522 (SPI) and PN532 (I²C)
+  breakouts. Adjust these values to match your hardware.
+- `RfidReader.h` – façade for the RFID hardware. The reader now
+  instantiates the proper backend automatically based on
+  `NFC_READER_TYPE`, so application code only needs to call
+  `RfidReader::begin()` and `RfidReader::readCard()`.
 
-```src/main.c
+To switch between RC522 and PN532 hardware, edit `Config.h` and set:
 
-#include "header.h"
-
-int main (void)
-{
- ...
-}
+```cpp
+static constexpr RfidHardwareType NFC_READER_TYPE = RfidHardwareType::PN532;
 ```
 
-Including a header file produces the same results as copying the header file
-into each source file that needs it. Such copying would be time-consuming
-and error-prone. With a header file, the related declarations appear
-in only one place. If they need to be changed, they can be changed in one
-place, and programs that include the header file will automatically use the
-new version when next recompiled. The header file eliminates the labor of
-finding and changing all the copies as well as the risk that a failure to
-find one copy will result in inconsistencies within a program.
-
-In C, the convention is to give header files names that end with `.h'.
-
-Read more about using header files in official GCC documentation:
-
-* Include Syntax
-* Include Operation
-* Once-Only Headers
-* Computed Includes
-
-https://gcc.gnu.org/onlinedocs/cpp/Header-Files.html
+Then update the relevant pin constants (`NFC_SS_PIN`/`NFC_RST_PIN` for the
+RC522 or `PN532_IRQ_PIN`, `PN532_RST_PIN`, `PN532_SDA_PIN`, `PN532_SCL_PIN`
+for the PN532). Rebuild and upload the firmware – the rest of the code
+path is hardware-agnostic.

@@ -28,13 +28,30 @@ static constexpr const char *const WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
 static constexpr const char *const BACKEND_HOST  = SECRET_BACKEND_HOST;
 static constexpr uint16_t         BACKEND_PORT  = SECRET_BACKEND_PORT;
 
-// Hardware pin definitions. These default values correspond to a
-// typical ESP32 dev kit wired to an MFRC522 module via SPI and using
-// the built‑in LED for feedback. Update these constants to match
-// your wiring. If your previous project used different GPIOs, set
-// them here accordingly to preserve compatibility.
+// RFID/NFC reader selection. Choose which hardware backend should be
+// compiled into the firmware. Add new enum values if additional reader
+// types are supported in the future.
+enum class RfidHardwareType { RC522, PN532 };
+
+// Select the active reader for this build. The default remains the
+// MFRC522 as it was the original hardware target. Change this constant
+// to `RfidHardwareType::PN532` when wiring a PN532 breakout instead.
+static constexpr RfidHardwareType NFC_READER_TYPE = RfidHardwareType::RC522;
+
+// Hardware pin definitions. These defaults correspond to common ESP32
+// development board layouts. Update them to match your wiring. The
+// RC522 uses SPI while the PN532 is configured for I²C by default.
 static constexpr uint8_t NFC_SS_PIN  = 5;   // SPI SS pin (SDA/SS) for RC522
 static constexpr uint8_t NFC_RST_PIN = 27;  // Reset pin for RC522
+
+// PN532 (I²C) wiring defaults. IRQ and reset are optional on some
+// boards, but defining them here keeps the setup consistent. SDA/SCL
+// default to the standard ESP32 I²C pins.
+static constexpr uint8_t PN532_IRQ_PIN  = 4;   // IRQ pin from PN532 to ESP32
+static constexpr uint8_t PN532_RST_PIN  = 16;  // Optional PN532 reset pin
+static constexpr uint8_t PN532_SDA_PIN  = 21;  // I²C SDA
+static constexpr uint8_t PN532_SCL_PIN  = 22;  // I²C SCL
+
 static constexpr uint8_t LED_PIN     = 2;   // On‑board LED (GPIO2 on most ESP32)
 
 // Debounce interval (ms) to ignore repeated reads of the same card.

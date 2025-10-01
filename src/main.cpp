@@ -75,8 +75,7 @@ void setup() {
 
   // Initialise NFC reader
   Serial.println("Initializing NFC reader...");
-  Serial.printf("NFC SS Pin: %d, RST Pin: %d\n", NFC_SS_PIN, NFC_RST_PIN);
-  rfid.begin(NFC_SS_PIN, NFC_RST_PIN);
+  rfid.begin();
   Serial.println("NFC reader initialized");
 
   Serial.println("=================================");
