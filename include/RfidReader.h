@@ -9,15 +9,23 @@
 
 #pragma once
 
-#include <MFRC522.h>
-#include <SPI.h>
+#include <Arduino.h>
+#include <memory>
+
+class IRfidBackend {
+public:
+  virtual ~IRfidBackend() = default;
+  virtual bool begin() = 0;
+  virtual bool readCard(String &uidHex) = 0;
+};
 
 class RfidReader {
 public:
   /**
-   * Initialise the RC522 reader. Provide the SPI SS and reset pins.
+   * Initialise the configured RFID/NFC backend. Pin assignments and
+   * hardware type are defined in Config.h.
    */
-  void begin(uint8_t ssPin, uint8_t rstPin);
+  void begin();
 
   /**
    * Attempt to read a card UID. Returns true if a new card is
@@ -27,5 +35,5 @@ public:
   bool readCard(String &uidHex);
 
 private:
-  MFRC522 _mfrc522;
+  std::unique_ptr<IRfidBackend> _backend;
 };
