@@ -72,6 +72,11 @@ static constexpr uint8_t PN532_MISO_PIN = 19;  // SPI MISO
 
 static constexpr uint8_t LED_PIN     = 2;   // On‑board LED (GPIO2 on most ESP32)
 
+// Addressable LED strip configuration (WS2812/NeoPixel)
+static constexpr uint8_t  LED_DATA_PIN           = 12;  // Data in to the strip
+static constexpr uint16_t LED_COUNT_DEFAULT      = 11;  // Number of pixels in the strip
+static constexpr uint8_t  LED_BRIGHTNESS_DEFAULT = 64;  // 0-255 brightness scaling
+
 // Debounce interval (ms) to ignore repeated reads of the same card.
 static constexpr unsigned long CARD_DEBOUNCE_MS = 800;
 
@@ -81,9 +86,4 @@ static constexpr unsigned long WIFI_RETRY_DELAY_MS = 2000;
 static constexpr uint8_t       MAX_WIFI_RETRIES     = 20;
 
 
-// RGB LED pins - adjust these to match your wiring
-// Common pin should be connected to GND (Common Cathode) or VCC (Common Anode)
-static constexpr uint8_t LED_RED_PIN   = 12;   // Red channel
-static constexpr uint8_t LED_GREEN_PIN = 13;   // Green channel  
-static constexpr uint8_t LED_BLUE_PIN  = 14;  // Blue channel
-static constexpr bool    LED_COMMON_ANODE = false; // Set to true if Common Anode
+// Legacy discrete RGB LED configuration removed; use the NeoPixel strip instead.
