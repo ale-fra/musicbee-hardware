@@ -12,11 +12,12 @@ EffectManager::EffectManager(uint8_t dataPin, uint16_t ledCount, uint8_t default
       _breathingEffect() {}
 
 void EffectManager::begin(unsigned long now) {
+  (void)now;
   _strip.begin();
   _strip.setBrightness(_brightness);
   _strip.setAll(_strip.color(0, 0, 0));
   _strip.apply();
-  setEffect(_solidEffect, now);
+  _activeEffect = nullptr;
 }
 
 void EffectManager::update(unsigned long now) {

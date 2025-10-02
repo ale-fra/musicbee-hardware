@@ -22,6 +22,7 @@ enum class VisualState {
   WifiConnecting,
   WifiConnected,
   WifiError,
+  CardDetected,
   BackendSuccess,
   BackendError
 };
@@ -32,7 +33,8 @@ static unsigned long visualStateChangedAt = 0;
 static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
 
 static bool isTransientState(VisualState state) {
-  return state == VisualState::BackendSuccess || state == VisualState::BackendError;
+  return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
+         state == VisualState::BackendError;
 }
 
 static void applyVisualState(VisualState state, unsigned long now) {
@@ -46,6 +48,10 @@ static void applyVisualState(VisualState state, unsigned long now) {
       break;
     case VisualState::WifiError:
       effects.showSolidColor(255, 0, 0, now);
+      break;
+    case VisualState::CardDetected:
+      effects.breathingEffect().setPeriod(600);
+      effects.showBreathing(255, 180, 60, now);
       break;
     case VisualState::BackendSuccess:
       effects.snakeEffect().setInterval(90);
@@ -186,6 +192,9 @@ void loop() {
   if (cardRead) {
     Serial.println("*** CARD DETECTED ***");
     Serial.printf("Raw UID: %s (length: %d)\n", uid.c_str(), uid.length());
+
+    now = millis();
+    setVisualState(VisualState::CardDetected, now);
 
     bool isDuplicate = uid == lastUid && (now - lastReadTime) < CARD_DEBOUNCE_MS;
     if (isDuplicate) {
