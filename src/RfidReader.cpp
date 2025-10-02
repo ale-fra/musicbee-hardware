@@ -19,8 +19,13 @@
 #endif
 
 #if defined(USE_PN532)
-#include <Wire.h>
-#include <Adafruit_PN532.h>
+#  if defined(USE_PN532_SPI)
+#    include <SPI.h>
+#    include <PN532_SPI.h>
+#  else
+#    include <Wire.h>
+#  endif
+#  include <Adafruit_PN532.h>
 #endif
 
 #include <array>
@@ -106,19 +111,44 @@ private:
 #if defined(USE_PN532)
 class Pn532Backend final : public IRfidBackend {
 public:
+#  if defined(USE_PN532_SPI)
+  Pn532Backend(uint8_t irqPin,
+               uint8_t resetPin,
+               uint8_t ssPin,
+               uint8_t sckPin,
+               uint8_t mosiPin,
+               uint8_t misoPin)
+      : _irqPin(irqPin),
+        _resetPin(resetPin),
+        _ssPin(ssPin),
+        _sckPin(sckPin),
+        _mosiPin(mosiPin),
+        _misoPin(misoPin),
+        _pn532spi(SPI, ssPin),
+        _pn532(_pn532spi) {}
+#  else
   Pn532Backend(uint8_t irqPin, uint8_t resetPin, uint8_t sdaPin, uint8_t sclPin)
       : _irqPin(irqPin),
         _resetPin(resetPin),
         _sdaPin(sdaPin),
         _sclPin(sclPin),
         _pn532(irqPin, resetPin) {}
+#  endif
 
   bool begin() override {
-    Serial.printf("[RFID] Initializing PN532 (IRQ=%d, RST=%d, SDA=%d, SCL=%d)\n",
+#  if defined(USE_PN532_SPI)
+    Serial.printf("[RFID] Initializing PN532 SPI (IRQ=%d, RST=%d, SS=%d, SCK=%d, MOSI=%d, MISO=%d)\n",
+                  _irqPin, _resetPin, _ssPin, _sckPin, _mosiPin, _misoPin);
+
+    SPI.begin(_sckPin, _misoPin, _mosiPin, _ssPin);
+    Serial.println("[RFID] SPI bus initialized");
+#  else
+    Serial.printf("[RFID] Initializing PN532 I2C (IRQ=%d, RST=%d, SDA=%d, SCL=%d)\n",
                   _irqPin, _resetPin, _sdaPin, _sclPin);
 
     Wire.begin(_sdaPin, _sclPin);
     Serial.println("[RFID] I2C bus initialized");
+#  endif
 
     _pn532.begin();
 
@@ -167,12 +197,20 @@ public:
   }
 
 private:
-  uint8_t          _irqPin;
-  uint8_t          _resetPin;
-  uint8_t          _sdaPin;
-  uint8_t          _sclPin;
-  Adafruit_PN532   _pn532;
-  bool             _initialised = false;
+  uint8_t _irqPin;
+  uint8_t _resetPin;
+#  if defined(USE_PN532_SPI)
+  uint8_t        _ssPin;
+  uint8_t        _sckPin;
+  uint8_t        _mosiPin;
+  uint8_t        _misoPin;
+  PN532_SPI      _pn532spi;
+#  else
+  uint8_t        _sdaPin;
+  uint8_t        _sclPin;
+#  endif
+  Adafruit_PN532 _pn532;
+  bool           _initialised = false;
 };
 #endif  // defined(USE_PN532)
 
@@ -187,7 +225,18 @@ void RfidReader::begin() {
 #endif
 #if defined(USE_PN532)
     case RfidHardwareType::PN532:
-      _backend.reset(new Pn532Backend(PN532_IRQ_PIN, PN532_RST_PIN, PN532_SDA_PIN, PN532_SCL_PIN));
+      _backend.reset(new Pn532Backend(PN532_IRQ_PIN,
+                                      PN532_RST_PIN,
+#  if defined(USE_PN532_SPI)
+                                      PN532_SS_PIN,
+                                      PN532_SCK_PIN,
+                                      PN532_MOSI_PIN,
+                                      PN532_MISO_PIN
+#  else
+                                      PN532_SDA_PIN,
+                                      PN532_SCL_PIN
+#  endif
+                                      ));
       break;
 #endif
     default:
