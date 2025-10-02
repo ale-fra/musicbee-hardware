@@ -22,6 +22,40 @@ static Led statusLed;
 static String lastUid = "";
 static unsigned long lastReadTime = 0;
 static unsigned long lastDebugTime = 0;
+static bool mdnsStarted = false;
+static bool wifiPreviouslyConnected = false;
+
+static void initializeMdns() {
+  if (mdnsStarted) {
+    return;
+  }
+
+  Serial.println("Initializing mDNS...");
+  if (MDNS.begin("nfc-jukebox")) {
+    mdnsStarted = true;
+    Serial.println("mDNS responder started");
+    Serial.println("ESP32 is now discoverable as nfc-jukebox.local");
+
+    // Test mDNS resolution of backend host if it's a .local domain
+    String backendHost = String(BACKEND_HOST);
+    if (backendHost.endsWith(".local")) {
+      Serial.printf("Testing mDNS resolution for backend: %s\n", BACKEND_HOST);
+
+      String hostname = backendHost;
+      hostname.replace(".local", "");
+      IPAddress resolvedIP = MDNS.queryHost(hostname);
+
+      if (resolvedIP == IPAddress(0, 0, 0, 0)) {
+        Serial.printf("[WARNING] Could not resolve %s via mDNS\n", BACKEND_HOST);
+        Serial.println("Make sure your backend server is running and mDNS is enabled");
+      } else {
+        Serial.printf("[SUCCESS] %s resolved to %s\n", BACKEND_HOST, resolvedIP.toString().c_str());
+      }
+    }
+  } else {
+    Serial.println("Error starting mDNS responder");
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -45,33 +79,11 @@ void setup() {
   } else {
     Serial.println("Wi-Fi connected successfully!");
     statusLed.showWifiStatus(true, false); // Show connected
-    
-    // Initialize mDNS if Wi-Fi is connected
-    Serial.println("Initializing mDNS...");
-    if (MDNS.begin("nfc-jukebox")) {
-      Serial.println("mDNS responder started");
-      Serial.println("ESP32 is now discoverable as nfc-jukebox.local");
-      
-      // Test mDNS resolution of backend host if it's a .local domain
-      String backendHost = String(BACKEND_HOST);
-      if (backendHost.endsWith(".local")) {
-        Serial.printf("Testing mDNS resolution for backend: %s\n", BACKEND_HOST);
-        
-        String hostname = backendHost;
-        hostname.replace(".local", "");
-        IPAddress resolvedIP = MDNS.queryHost(hostname);
-        
-        if (resolvedIP == IPAddress(0, 0, 0, 0)) {
-          Serial.printf("[WARNING] Could not resolve %s via mDNS\n", BACKEND_HOST);
-          Serial.println("Make sure your backend server is running and mDNS is enabled");
-        } else {
-          Serial.printf("[SUCCESS] %s resolved to %s\n", BACKEND_HOST, resolvedIP.toString().c_str());
-        }
-      }
-    } else {
-      Serial.println("Error starting mDNS responder");
-    }
+
+    initializeMdns();
   }
+
+  wifiPreviouslyConnected = wifi.isConnected();
 
   // Initialise NFC reader
   Serial.println("Initializing NFC reader...");
@@ -97,6 +109,14 @@ void setup() {
 void loop() {
   // Maintain Wi-Fi connection
   wifi.loop();
+
+  bool isConnected = wifi.isConnected();
+  if (isConnected && !wifiPreviouslyConnected) {
+    initializeMdns();
+  } else if (!isConnected && wifiPreviouslyConnected) {
+    mdnsStarted = false;
+  }
+  wifiPreviouslyConnected = isConnected;
 
   // Print periodic status (every 10 seconds)
   unsigned long now = millis();
