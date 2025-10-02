@@ -11,12 +11,72 @@
 #include "WifiManager.h"
 #include "RfidReader.h"
 #include "BackendClient.h"
-#include "Led.h"
+#include "EffectManager.h"
 
 static WifiManager wifi;
 static RfidReader rfid;
 static BackendClient backend;
-static Led statusLed;
+static EffectManager effects(LED_DATA_PIN, LED_COUNT_DEFAULT, LED_BRIGHTNESS_DEFAULT);
+
+enum class VisualState {
+  WifiConnecting,
+  WifiConnected,
+  WifiError,
+  BackendSuccess,
+  BackendError
+};
+
+static VisualState baseVisualState = VisualState::WifiConnecting;
+static VisualState currentVisualState = VisualState::WifiConnecting;
+static unsigned long visualStateChangedAt = 0;
+static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
+
+static bool isTransientState(VisualState state) {
+  return state == VisualState::BackendSuccess || state == VisualState::BackendError;
+}
+
+static void applyVisualState(VisualState state, unsigned long now) {
+  switch (state) {
+    case VisualState::WifiConnecting:
+      effects.breathingEffect().setPeriod(1500);
+      effects.showBreathing(0, 0, 255, now);
+      break;
+    case VisualState::WifiConnected:
+      effects.showSolidColor(0, 255, 0, now);
+      break;
+    case VisualState::WifiError:
+      effects.showSolidColor(255, 0, 0, now);
+      break;
+    case VisualState::BackendSuccess:
+      effects.snakeEffect().setInterval(90);
+      effects.showSnake(0, 255, 0, now);
+      break;
+    case VisualState::BackendError:
+      effects.breathingEffect().setPeriod(1200);
+      effects.showBreathing(255, 0, 0, now);
+      break;
+  }
+}
+
+static void setVisualState(VisualState state, unsigned long now) {
+  currentVisualState = state;
+  visualStateChangedAt = now;
+  applyVisualState(state, now);
+}
+
+static void setBaseVisualState(VisualState state, unsigned long now) {
+  baseVisualState = state;
+  if (!isTransientState(currentVisualState) || currentVisualState == state) {
+    setVisualState(state, now);
+  }
+}
+
+static void refreshVisualState(unsigned long now) {
+  if (isTransientState(currentVisualState) &&
+      now - visualStateChangedAt >= TRANSIENT_EFFECT_DURATION_MS) {
+    setVisualState(baseVisualState, now);
+  }
+}
 
 // Variables to handle debouncing of repeated card reads
 static String lastUid = "";
@@ -65,21 +125,20 @@ void setup() {
   Serial.println("Jukebox NFC starting...");
   Serial.println("=================================");
 
-  // Initialise RGB LED
-  Serial.println("Initializing RGB LED...");
-  statusLed.begin(LED_RED_PIN, LED_GREEN_PIN, LED_BLUE_PIN, LED_COMMON_ANODE);
-  Serial.printf("RGB LED initialized - R:%d G:%d B:%d\n", LED_RED_PIN, LED_GREEN_PIN, LED_BLUE_PIN);
+  Serial.println("Initializing LED strip...");
+  unsigned long now = millis();
+  effects.begin(now);
+  setBaseVisualState(VisualState::WifiConnecting, now);
 
   // Connect to Wi-Fi
   Serial.println("Starting Wi-Fi connection...");
-  statusLed.showWifiStatus(false, true); // Show connecting
   if (!wifi.begin()) {
     Serial.println("Initial Wi-Fi connection failed. The device will continue retrying in the background.");
-    statusLed.showWifiStatus(false, false); // Show failed
+    setBaseVisualState(VisualState::WifiError, millis());
   } else {
     Serial.println("Wi-Fi connected successfully!");
-    statusLed.showWifiStatus(true, false); // Show connected
-
+    unsigned long connectedNow = millis();
+    setBaseVisualState(VisualState::WifiConnected, connectedNow);
     initializeMdns();
   }
 
@@ -95,35 +154,29 @@ void setup() {
   Serial.println("Place an NFC card near the reader...");
   Serial.println("=================================\n");
   
-  // Test blink to show LED is working
-  Serial.println("Testing RGB LED...");
-  statusLed.setRed();
-  delay(300);
-  statusLed.setGreen(); 
-  delay(300);
-  statusLed.setBlue();
-  delay(300);
-  statusLed.off();
 }
 
 void loop() {
   // Maintain Wi-Fi connection
   wifi.loop();
 
+  unsigned long now = millis();
+
   bool isConnected = wifi.isConnected();
   if (isConnected && !wifiPreviouslyConnected) {
     initializeMdns();
+    setBaseVisualState(VisualState::WifiConnected, now);
   } else if (!isConnected && wifiPreviouslyConnected) {
     mdnsStarted = false;
+    setBaseVisualState(VisualState::WifiConnecting, now);
   }
   wifiPreviouslyConnected = isConnected;
 
   // Print periodic status (every 10 seconds)
-  unsigned long now = millis();
   if (now - lastDebugTime > 10000) {
     lastDebugTime = now;
-    Serial.printf("[DEBUG] Still running... WiFi: %s\n", 
-                  wifi.isConnected() ? "Connected" : "Disconnected");
+    Serial.printf("[DEBUG] Still running... WiFi: %s\n",
+                  isConnected ? "Connected" : "Disconnected");
   }
 
   // Try to read a card
@@ -133,37 +186,37 @@ void loop() {
   if (cardRead) {
     Serial.println("*** CARD DETECTED ***");
     Serial.printf("Raw UID: %s (length: %d)\n", uid.c_str(), uid.length());
-    
-    // Debounce: ignore if same UID as last within debounce window
-    if (uid == lastUid && (now - lastReadTime) < CARD_DEBOUNCE_MS) {
-      Serial.printf("[DEBOUNCE] Ignoring repeated read (last read %lu ms ago)\n", 
+
+    bool isDuplicate = uid == lastUid && (now - lastReadTime) < CARD_DEBOUNCE_MS;
+    if (isDuplicate) {
+      Serial.printf("[DEBOUNCE] Ignoring repeated read (last read %lu ms ago)\n",
                     now - lastReadTime);
-      return;
-    }
-    
-    lastUid = uid;
-    lastReadTime = now;
-    Serial.printf("Card accepted: UID=%s\n", uid.c_str());
-
-    // Only send if we have Wi-Fi; otherwise blink error and skip
-    if (!wifi.isConnected()) {
-      Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
-      statusLed.blinkError();
-      return;
-    }
-
-    Serial.println("Sending request to backend...");
-    bool ok = backend.postPlay(uid);
-    if (ok) {
-      Serial.println("[SUCCESS] Backend request successful");
-      statusLed.blinkSuccess();
     } else {
-      Serial.println("[ERROR] Backend request failed");
-      statusLed.blinkError();
+      lastUid = uid;
+      lastReadTime = now;
+      Serial.printf("Card accepted: UID=%s\n", uid.c_str());
+
+      if (!wifi.isConnected()) {
+        Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
+        setVisualState(VisualState::BackendError, millis());
+        now = millis();
+      } else {
+        Serial.println("Sending request to backend...");
+        bool ok = backend.postPlay(uid);
+        now = millis();
+        if (ok) {
+          Serial.println("[SUCCESS] Backend request successful");
+          setVisualState(VisualState::BackendSuccess, now);
+        } else {
+          Serial.println("[ERROR] Backend request failed");
+          setVisualState(VisualState::BackendError, now);
+        }
+      }
+      Serial.println("*** END CARD PROCESSING ***\n");
     }
-    Serial.println("*** END CARD PROCESSING ***\n");
   }
-  
-  // Small delay to prevent overwhelming the system
-  delay(100);
+
+  now = millis();
+  refreshVisualState(now);
+  effects.update(now);
 }
