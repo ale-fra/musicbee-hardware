@@ -30,13 +30,23 @@ static constexpr uint16_t         BACKEND_PORT  = SECRET_BACKEND_PORT;
 
 // RFID/NFC reader selection. Choose which hardware backend should be
 // compiled into the firmware. Add new enum values if additional reader
-// types are supported in the future.
+// types are supported in the future. Exactly one of the build flags
+// USE_RC522 or USE_PN532 must be defined (see platformio.ini); they
+// control which driver is compiled and must match the selection below.
 enum class RfidHardwareType { RC522, PN532 };
 
 // Select the active reader for this build. The default remains the
 // MFRC522 as it was the original hardware target. Change this constant
 // to `RfidHardwareType::PN532` when wiring a PN532 breakout instead.
 static constexpr RfidHardwareType NFC_READER_TYPE = RfidHardwareType::RC522;
+
+#if defined(USE_RC522)
+static_assert(NFC_READER_TYPE == RfidHardwareType::RC522,
+              "NFC_READER_TYPE must be RfidHardwareType::RC522 when USE_RC522 is defined.");
+#elif defined(USE_PN532)
+static_assert(NFC_READER_TYPE == RfidHardwareType::PN532,
+              "NFC_READER_TYPE must be RfidHardwareType::PN532 when USE_PN532 is defined.");
+#endif
 
 // Hardware pin definitions. These defaults correspond to common ESP32
 // development board layouts. Update them to match your wiring. The
