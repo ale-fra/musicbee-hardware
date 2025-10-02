@@ -37,12 +37,21 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 
 ## Build and Flash
 1. Install PlatformIO.
-2. Connect the ESP32 via USB and select the `az-delivery-devkit-v4` environment defined in `platformio.ini`.
-3. Build and upload:
+2. Connect the ESP32 via USB and choose the environment that matches your NFC reader:
+   - `az-delivery-devkit-v4-rc522` for MFRC522 modules.
+   - `az-delivery-devkit-v4-pn532` for PN532 modules.
+3. Build and upload with the matching environment:
    ```sh
-   pio run
-   pio run --target upload
+   # MFRC522
+   pio run -e az-delivery-devkit-v4-rc522
+   pio run -e az-delivery-devkit-v4-rc522 --target upload
+
+   # PN532
+   pio run -e az-delivery-devkit-v4-pn532
+   pio run -e az-delivery-devkit-v4-pn532 --target upload
 ```
+
+   These environments set the `USE_RC522` or `USE_PN532` build flags that determine which driver is compiled. Make sure the `NFC_READER_TYPE` option in `include/Config.h` matches the reader and environment you selected.
 
 4. Open the serial monitor at 115200 baud to view logs:
 
