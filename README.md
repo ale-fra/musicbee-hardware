@@ -4,7 +4,7 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 
 ## Features
 - Tap-to-play card detection with debounce, backend notification, and serial logging.
-- Supports MFRC522 (SPI) and PN532 (I²C) NFC modules selected at compile time.
+- Supports MFRC522 (SPI) and PN532 (I²C or SPI) NFC modules selected at compile time.
 - Wi-Fi connection management with automatic retry and optional mDNS discovery for `.local` backends.
 - RGB status LED with success, error, and connectivity feedback patterns.
 
@@ -23,6 +23,15 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 ### PN532 (I²C) defaults
 - SDA → GPIO21 (`PN532_SDA_PIN`).
 - SCL → GPIO22 (`PN532_SCL_PIN`).
+- IRQ → GPIO4 (`PN532_IRQ_PIN`).
+- RST → GPIO16 (`PN532_RST_PIN`).
+- Power the breakout at 3.3 V and share ground with the ESP32.
+
+### PN532 (SPI) defaults
+- SS → GPIO5 (`PN532_SS_PIN`).
+- SCK → GPIO18 (`PN532_SCK_PIN`).
+- MOSI → GPIO23 (`PN532_MOSI_PIN`).
+- MISO → GPIO19 (`PN532_MISO_PIN`).
 - IRQ → GPIO4 (`PN532_IRQ_PIN`).
 - RST → GPIO16 (`PN532_RST_PIN`).
 - Power the breakout at 3.3 V and share ground with the ESP32.
@@ -51,7 +60,7 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
    pio run -e az-delivery-devkit-v4-pn532 --target upload
 ```
 
-   These environments set the `USE_RC522` or `USE_PN532` build flags that determine which driver is compiled. Make sure the `NFC_READER_TYPE` option in `include/Config.h` matches the reader and environment you selected.
+   These environments set the `USE_RC522` or `USE_PN532` build flags that determine which driver is compiled. Make sure the `NFC_READER_TYPE` option in `include/Config.h` matches the reader and environment you selected. Define `USE_PN532_SPI` (for example by adding `-DUSE_PN532_SPI` to the PN532 environment's `build_flags`) if you wire the PN532 for SPI instead of I²C.
 
 4. Open the serial monitor at 115200 baud to view logs:
 

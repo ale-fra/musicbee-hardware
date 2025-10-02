@@ -35,6 +35,10 @@ static constexpr uint16_t         BACKEND_PORT  = SECRET_BACKEND_PORT;
 // driver, and this block mirrors that choice.
 enum class RfidHardwareType { RC522, PN532 };
 
+#if defined(USE_PN532_SPI) && !defined(USE_PN532)
+#  error "USE_PN532_SPI requires USE_PN532 to also be defined."
+#endif
+
 #if defined(USE_PN532) && defined(USE_RC522)
 #  error "Only one of USE_PN532 or USE_RC522 may be defined."
 #elif defined(USE_PN532)
@@ -58,6 +62,13 @@ static constexpr uint8_t PN532_IRQ_PIN  = 4;   // IRQ pin from PN532 to ESP32
 static constexpr uint8_t PN532_RST_PIN  = 16;  // Optional PN532 reset pin
 static constexpr uint8_t PN532_SDA_PIN  = 21;  // I²C SDA
 static constexpr uint8_t PN532_SCL_PIN  = 22;  // I²C SCL
+
+// PN532 (SPI) wiring defaults. Define USE_PN532_SPI to activate these pins
+// and the SPI transport in the firmware.
+static constexpr uint8_t PN532_SS_PIN   = 5;   // SPI slave select
+static constexpr uint8_t PN532_SCK_PIN  = 18;  // SPI clock
+static constexpr uint8_t PN532_MOSI_PIN = 23;  // SPI MOSI
+static constexpr uint8_t PN532_MISO_PIN = 19;  // SPI MISO
 
 static constexpr uint8_t LED_PIN     = 2;   // On‑board LED (GPIO2 on most ESP32)
 
