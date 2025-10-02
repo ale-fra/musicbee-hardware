@@ -7,10 +7,21 @@
 
 #include "RfidReader.h"
 
+#if defined(USE_RC522) && defined(USE_PN532)
+#error "Only one of USE_RC522 or USE_PN532 may be defined"
+#elif !defined(USE_RC522) && !defined(USE_PN532)
+#error "One of USE_RC522 or USE_PN532 must be defined"
+#endif
+
+#if defined(USE_RC522)
 #include <MFRC522.h>
 #include <SPI.h>
+#endif
+
+#if defined(USE_PN532)
 #include <Wire.h>
 #include <Adafruit_PN532.h>
+#endif
 
 #include <array>
 
@@ -31,6 +42,7 @@ String bytesToHexString(const uint8_t *buffer, size_t length) {
   return uidHex;
 }
 
+#if defined(USE_RC522)
 class Rc522Backend final : public IRfidBackend {
 public:
   Rc522Backend(uint8_t ssPin, uint8_t rstPin)
@@ -89,7 +101,9 @@ private:
   uint8_t  _rstPin;
   MFRC522 _mfrc522;
 };
+#endif  // defined(USE_RC522)
 
+#if defined(USE_PN532)
 class Pn532Backend final : public IRfidBackend {
 public:
   Pn532Backend(uint8_t irqPin, uint8_t resetPin, uint8_t sdaPin, uint8_t sclPin)
@@ -160,18 +174,23 @@ private:
   Adafruit_PN532   _pn532;
   bool             _initialised = false;
 };
+#endif  // defined(USE_PN532)
 
 }  // namespace
 
 void RfidReader::begin() {
   switch (NFC_READER_TYPE) {
+#if defined(USE_RC522)
     case RfidHardwareType::RC522:
       _backend = std::make_unique<Rc522Backend>(NFC_SS_PIN, NFC_RST_PIN);
       break;
+#endif
+#if defined(USE_PN532)
     case RfidHardwareType::PN532:
       _backend = std::make_unique<Pn532Backend>(PN532_IRQ_PIN, PN532_RST_PIN,
                                                 PN532_SDA_PIN, PN532_SCL_PIN);
       break;
+#endif
     default:
       Serial.println("[RFID] Unsupported reader type selected");
       _backend.reset();
