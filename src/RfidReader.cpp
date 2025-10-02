@@ -12,6 +12,8 @@
 #include <Wire.h>
 #include <Adafruit_PN532.h>
 
+#include <array>
+
 #include "Config.h"
 
 namespace {
@@ -130,16 +132,22 @@ public:
       return false;
     }
 
-    uint8_t uid[7];
+    std::array<uint8_t, 10> uid{};
     uint8_t uidLength = 0;
 
-    bool success = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 1000);
+    bool success = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.data(), &uidLength, 1000);
     if (!success) {
       return false;
     }
 
+    if (uidLength > uid.size()) {
+      Serial.printf("[RFID] PN532 UID length %d exceeds buffer size %u, aborting read\n",
+                    uidLength, static_cast<unsigned int>(uid.size()));
+      return false;
+    }
+
     Serial.printf("[RFID] PN532 detected card, UID length: %d bytes\n", uidLength);
-    uidHex = bytesToHexString(uid, uidLength);
+    uidHex = bytesToHexString(uid.data(), uidLength);
     Serial.printf("[RFID] UID as hex string: %s\n", uidHex.c_str());
     return true;
   }
