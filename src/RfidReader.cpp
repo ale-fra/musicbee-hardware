@@ -182,13 +182,12 @@ void RfidReader::begin() {
   switch (NFC_READER_TYPE) {
 #if defined(USE_RC522)
     case RfidHardwareType::RC522:
-      _backend = std::make_unique<Rc522Backend>(NFC_SS_PIN, NFC_RST_PIN);
+      _backend.reset(new Rc522Backend(NFC_SS_PIN, NFC_RST_PIN));
       break;
 #endif
 #if defined(USE_PN532)
     case RfidHardwareType::PN532:
-      _backend = std::make_unique<Pn532Backend>(PN532_IRQ_PIN, PN532_RST_PIN,
-                                                PN532_SDA_PIN, PN532_SCL_PIN);
+      _backend.reset(new Pn532Backend(PN532_IRQ_PIN, PN532_RST_PIN, PN532_SDA_PIN, PN532_SCL_PIN));
       break;
 #endif
     default:
