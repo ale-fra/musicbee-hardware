@@ -42,7 +42,7 @@ static void applyVisualState(VisualState state, unsigned long now) {
       effects.showBreathing(0, 0, 255, now);
       break;
     case VisualState::WifiConnected:
-      effects.showSolidColor(0, 255, 0, now);
+      effects.showSolidColor(0, 0, 0, now);
       break;
     case VisualState::WifiError:
       effects.showSolidColor(255, 0, 0, now);
