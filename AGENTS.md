@@ -1,46 +1,104 @@
-# MusicBee Hardware – Agent Guide
+# 🎶 MusicBee Hardware – Agent Guide
 
-## Project scope
-- Firmware targets the ESP32-S3 and bridges NFC card reads to the MusicBee backend so kids can trigger playback safely via NFC tags.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=9 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L1-L9"}​
-- Two NFC reader families are supported: MFRC522 (SPI) and PN532 (I²C by default, SPI optional). LED feedback conveys Wi-Fi, card, and backend status.​:codex-file-citation[codex-file-citation]{line_range_start=7 line_range_end=41 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L7-L41"}​
+## 📦 Project Scope
 
-## Repository layout
-- `src/` – implementation files (`main.cpp`, drivers, and effect logic). The entry point orchestrates Wi-Fi, RFID, backend calls, and LED visuals.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=231 path=src/main.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/main.cpp#L1-L231"}​
-- `include/` – public headers and configuration (`Config.h`, `RfidReader.h`, `WifiManager.h`, effects). Configuration is compile-time and backed by secrets pulled from `secrets.h`.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=88 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L1-L88"}​​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=39 path=include/RfidReader.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/RfidReader.h#L1-L39"}​
-- `lib/` – optional PlatformIO libraries; empty template by default.
-- `test/` – placeholder for PlatformIO unit tests.
+* Firmware progettato per **ESP32-S3**, funge da bridge tra la lettura di **tag NFC** e il backend **MusicBee**, permettendo ai bambini di avviare la riproduzione musicale in sicurezza tramite NFC.
+* Supporta due famiglie di lettori NFC:
 
-## Build & flash workflow
-1. Copy `include/secrets.example.h` to `include/secrets.h` and fill Wi-Fi credentials plus backend host/port values. Keep `secrets.h` out of version control.​:codex-file-citation[codex-file-citation]{line_range_start=43 line_range_end=46 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L43-L46"}​​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=29 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L1-L29"}​
-2. Pick the PlatformIO environment that matches your reader (`esp32-s3-devkitc-1-rc522` or `esp32-s3-devkitc-1-pn532`) and run `pio run` / `pio run --target upload`. The PN532 SPI variant needs `-DUSE_PN532_SPI`.​:codex-file-citation[codex-file-citation]{line_range_start=47 line_range_end=64 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L47-L64"}​​:codex-file-citation[codex-file-citation]{line_range_start=10 line_range_end=45 path=platformio.ini git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/platformio.ini#L10-L45"}​
-3. Monitor logs with `pio device monitor -b 115200` to verify connectivity and backend responses.​:codex-file-citation[codex-file-citation]{line_range_start=65 line_range_end=69 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L65-L69"}​
-4. For new hardware types, add an enum entry in `Config.h`, map pin constants, and extend the PlatformIO environment appropriately.​:codex-file-citation[codex-file-citation]{line_range_start=31 line_range_end=77 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L31-L77"}​​:codex-file-citation[codex-file-citation]{line_range_start=10 line_range_end=45 path=platformio.ini git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/platformio.ini#L10-L45"}​
+  * **MFRC522** – interfaccia SPI
+  * **PN532** – interfaccia I²C (SPI opzionale)
+* Feedback tramite **LED** indica stato Wi-Fi, lettura card e comunicazione col backend.
 
-## Secrets & configuration
-- Define new compile-time toggles in `Config.h` as `static constexpr` constants with explanatory comments so deployments remain reproducible.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=88 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L1-L88"}​
-- Never commit real credentials; mirror new fields in `secrets.example.h`.
+---
 
-## Coding conventions
-- Use `#pragma once` in headers and prefer `static constexpr` over macros for constants.​:codex-file-citation[codex-file-citation]{line_range_start=11 line_range_end=30 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L11-L30"}​
-- Indent with two spaces, follow early-return guard style, and keep functions small and single-purpose as demonstrated across `src/`.​:codex-file-citation[codex-file-citation]{line_range_start=14 line_range_end=88 path=src/BackendClient.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/BackendClient.cpp#L14-L88"}​​:codex-file-citation[codex-file-citation]{line_range_start=10 line_range_end=48 path=src/WifiManager.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/WifiManager.cpp#L10-L48"}​
-- Log with tagged `Serial.printf`/`Serial.println` messages (e.g., `[Backend]`, `[RFID]`) to aid serial debugging; mimic existing tone and troubleshooting hints.​:codex-file-citation[codex-file-citation]{line_range_start=27 line_range_end=84 path=src/BackendClient.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/BackendClient.cpp#L27-L84"}​​:codex-file-citation[codex-file-citation]{line_range_start=55 line_range_end=221 path=src/RfidReader.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/RfidReader.cpp#L55-L221"}​
-- Use `enum class` for state machines and keep timing in `unsigned long` milliseconds via `millis()` utilities.​:codex-file-citation[codex-file-citation]{line_range_start=21 line_range_end=230 path=src/main.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/main.cpp#L21-L230"}​
-- Favor RAII helpers (`std::unique_ptr`) for hardware backends and isolate hardware-specific code inside internal classes or namespaces.​:codex-file-citation[codex-file-citation]{line_range_start=30 line_range_end=285 path=src/RfidReader.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/RfidReader.cpp#L30-L285"}​
-- Document each module with a header comment summarizing its purpose.
+## 📁 Repository Layout
 
-## Firmware architecture notes
-- `main.cpp` owns the event loop. Visual feedback is centralized via `EffectManager`; transient states (card detected, backend result) expire after 2.5 seconds before reverting to the base Wi-Fi state.​:codex-file-citation[codex-file-citation]{line_range_start=21 line_range_end=231 path=src/main.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/main.cpp#L21-L231"}​
-- `WifiManager` wraps connection setup, retries every five seconds, and exposes `isConnected()` for guards before network calls.​:codex-file-citation[codex-file-citation]{line_range_start=10 line_range_end=48 path=src/WifiManager.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/WifiManager.cpp#L10-L48"}​
-- `BackendClient` resolves `.local` hosts with mDNS and posts JSON stubs to `/api/v1/cards/{uid}/play`, treating any non-2xx response as failure.​:codex-file-citation[codex-file-citation]{line_range_start=24 line_range_end=87 path=src/BackendClient.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/BackendClient.cpp#L24-L87"}​
-- `RfidReader` selects the correct backend (RC522 or PN532) at runtime based on `Config.h`. Add new readers by implementing `IRfidBackend` and wiring it in the switch block.​:codex-file-citation[codex-file-citation]{line_range_start=15 line_range_end=39 path=include/RfidReader.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/RfidReader.h#L15-L39"}​​:codex-file-citation[codex-file-citation]{line_range_start=34 line_range_end=285 path=src/RfidReader.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/RfidReader.cpp#L34-L285"}​
-- `EffectManager` exposes `SolidColor`, `Snake`, and `Breathing` effects. When creating new animations, subclass `Effect`, override `begin/update`, and let `EffectManager` handle strip wiring.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=161 path=src/Effects.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/Effects.cpp#L1-L161"}​​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=63 path=src/EffectManager.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/EffectManager.cpp#L1-L63"}​
+* **`src/`** – implementazioni principali (`main.cpp`, driver e logica effetti). Il punto di ingresso gestisce Wi-Fi, RFID, chiamate al backend e segnalazioni LED.
+* **`include/`** – header pubblici e configurazioni (`Config.h`, `RfidReader.h`, `WifiManager.h`, effetti). La configurazione è a **compile-time** e i segreti sono caricati da `secrets.h`.
+* **`lib/`** – librerie opzionali per PlatformIO (vuoto per default).
+* **`test/`** – placeholder per test unitari PlatformIO.
 
-## Testing & debugging expectations
-- Build and (when hardware is available) upload via `pio run`/`pio run --target upload`. Consider adding PlatformIO unit tests in `test/` for logic that can run on the host.
-- Watch for Wi-Fi reconnection logs and `[DEBOUNCE]` messages to ensure debounce settings remain sane when adjusting `CARD_DEBOUNCE_MS`.​:codex-file-citation[codex-file-citation]{line_range_start=181 line_range_end=230 path=src/main.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/main.cpp#L181-L230"}​​:codex-file-citation[codex-file-citation]{line_range_start=74 line_range_end=85 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L74-L85"}​
-- Validate new backend integrations with serial logging; keep troubleshooting hints user-friendly like the current implementation.
+---
 
-## Documentation & PR checklist
-- Update `README.md` if you change wiring defaults, add hardware, or alter user-facing behavior.​:codex-file-citation[codex-file-citation]{line_range_start=17 line_range_end=83 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L17-L83"}​
-- Keep `include/README` in sync when adding configuration knobs so downstream users know where to look.
-- Ensure secrets placeholders stay accurate, bump library dependencies in `platformio.ini` when required, and include test/flash commands in PR descriptions.
+## 🔧 Build & Flash Workflow
+
+1. Copia `include/secrets.example.h` in `include/secrets.h` e inserisci **SSID**, **password Wi-Fi**, **host** e **porta** del backend.
+   ⚠️ **Non** committare mai `secrets.h`.
+2. Seleziona l’ambiente PlatformIO in base al lettore NFC:
+
+   * `esp32-s3-devkitc-1-rc522`
+   * `esp32-s3-devkitc-1-pn532`
+     Per usare PN532 in modalità SPI aggiungi `-DUSE_PN532_SPI`.
+3. Compila e flasha con:
+
+   ```bash
+   pio run
+   pio run --target upload
+   ```
+4. Monitora i log con:
+
+   ```bash
+   pio device monitor -b 115200
+   ```
+5. Per supportare nuovo hardware:
+
+   * Aggiungi una voce all’enum in `Config.h`
+   * Definisci i pin corrispondenti
+   * Estendi l’ambiente PlatformIO
+
+---
+
+## 🔐 Secrets & Configuration
+
+* Definisci nuove opzioni come `static constexpr` in `Config.h` con commenti chiari per garantire build riproducibili.
+* Non committare mai credenziali reali. Aggiorna sempre `secrets.example.h` con eventuali nuovi campi.
+
+---
+
+## ✍️ Coding Conventions
+
+* Usa `#pragma once` negli header.
+* Preferisci `static constexpr` alle macro.
+* Indenta con **2 spazi**, usa **early return**, e mantieni le funzioni **brevi e single-purpose**.
+* Per il logging usa messaggi taggati `Serial.printf` / `Serial.println` (es. `[Backend]`, `[RFID]`) per facilitare il debug.
+* Usa `enum class` per gli state machine e misura il tempo con `unsigned long` e `millis()`.
+* Utilizza RAII (`std::unique_ptr`) per gestire backend hardware e incapsula il codice specifico in classi o namespace dedicati.
+* Ogni modulo deve avere un **commento di intestazione** con lo scopo del file.
+
+---
+
+## 🏗️ Firmware Architecture
+
+* **`main.cpp`** gestisce il loop principale. Gli effetti LED sono centralizzati in `EffectManager`; gli stati temporanei (es. card letta, risposta backend) durano ~2.5s prima di tornare allo stato base Wi-Fi.
+* **`WifiManager`** gestisce la connessione e i retry ogni 5s. Espone `isConnected()` per controlli prima delle chiamate di rete.
+* **`BackendClient`** risolve host `.local` tramite **mDNS** e invia richieste JSON a `/api/v1/cards/{uid}/play`. Qualsiasi risposta non-2xx è considerata errore.
+* **`RfidReader`** seleziona il backend corretto (RC522 o PN532) in base a `Config.h`. Per nuovi lettori implementa `IRfidBackend` e aggiungi la selezione nello `switch`.
+* **`EffectManager`** fornisce effetti `SolidColor`, `Snake` e `Breathing`. Per crearne di nuovi, sottoclassa `Effect`, sovrascrivi `begin()` e `update()`, e lascia a `EffectManager` la gestione della strip LED.
+
+---
+
+## 🧪 Testing & Debugging
+
+* Compila e flasha con:
+
+  ```bash
+  pio run
+  pio run --target upload
+  ```
+* Osserva log di riconnessione Wi-Fi e messaggi `[DEBOUNCE]` per controllare la bontà del valore `CARD_DEBOUNCE_MS`.
+* Valida nuove integrazioni backend tramite logging seriale e mantieni i messaggi di debug leggibili e informativi.
+
+---
+
+## 📚 Documentation & PR Checklist
+
+* Aggiorna `README.md` se cambi pinout, aggiungi hardware o modifichi comportamenti visibili all’utente.
+* Mantieni aggiornato `include/README` quando aggiungi nuove opzioni di configurazione.
+* Aggiorna i placeholder in `secrets.example.h` se aggiungi nuovi campi.
+* Aggiorna le dipendenze in `platformio.ini` quando necessario.
+* Includi sempre i comandi di build e flash nella descrizione delle PR.
+
+---
+
+✅ **Tip:** Mantieni il flusso di lavoro semplice e documenta ogni nuovo modulo. Il progetto è progettato per essere estensibile, quindi aggiungere nuovi lettori NFC o effetti LED dovrebbe richiedere solo modifiche locali e minime.
+
