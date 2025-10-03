@@ -65,15 +65,14 @@ static constexpr uint8_t PN532_SCL_PIN  = 22;  // I²C SCL
 
 // PN532 (SPI) wiring defaults. Define USE_PN532_SPI to activate these pins
 // and the SPI transport in the firmware.
-static constexpr uint8_t PN532_SS_PIN   = 5;   // SPI slave select
-static constexpr uint8_t PN532_SCK_PIN  = 18;  // SPI clock
-static constexpr uint8_t PN532_MOSI_PIN = 23;  // SPI MOSI
-static constexpr uint8_t PN532_MISO_PIN = 19;  // SPI MISO
 
-static constexpr uint8_t LED_PIN     = 2;   // On‑board LED (GPIO2 on most ESP32)
+static constexpr uint8_t PN532_SS_PIN   = 10;  // SPI slave select (CS)
+static constexpr uint8_t PN532_SCK_PIN  = 12;  // SPI clock
+static constexpr uint8_t PN532_MOSI_PIN = 11;  // SPI MOSI
+static constexpr uint8_t PN532_MISO_PIN = 13;  // SPI MISO
 
 // Addressable LED strip configuration (WS2812/NeoPixel)
-static constexpr uint8_t  LED_DATA_PIN           = 12;  // Data in to the strip
+static constexpr uint8_t  LED_DATA_PIN           = 48;  // Data in to the strip
 static constexpr uint16_t LED_COUNT_DEFAULT      = 11;  // Number of pixels in the strip
 static constexpr uint8_t  LED_BRIGHTNESS_DEFAULT = 64;  // 0-255 brightness scaling
 

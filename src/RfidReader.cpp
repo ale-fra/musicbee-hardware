@@ -19,13 +19,12 @@
 #endif
 
 #if defined(USE_PN532)
+#  include <Adafruit_PN532.h>
 #  if defined(USE_PN532_SPI)
 #    include <SPI.h>
-#    include <PN532_SPI.h>
 #  else
 #    include <Wire.h>
 #  endif
-#  include <Adafruit_PN532.h>
 #endif
 
 #include <array>
@@ -124,8 +123,7 @@ public:
         _sckPin(sckPin),
         _mosiPin(mosiPin),
         _misoPin(misoPin),
-        _pn532spi(SPI, ssPin),
-        _pn532(_pn532spi) {}
+        _pn532(ssPin) {}  // For hardware SPI, just pass SS pin
 #  else
   Pn532Backend(uint8_t irqPin, uint8_t resetPin, uint8_t sdaPin, uint8_t sclPin)
       : _irqPin(irqPin),
@@ -135,32 +133,59 @@ public:
         _pn532(irqPin, resetPin) {}
 #  endif
 
-  bool begin() override {
+bool begin() override {
 #  if defined(USE_PN532_SPI)
     Serial.printf("[RFID] Initializing PN532 SPI (IRQ=%d, RST=%d, SS=%d, SCK=%d, MOSI=%d, MISO=%d)\n",
                   _irqPin, _resetPin, _ssPin, _sckPin, _mosiPin, _misoPin);
 
+    // Initialize SPI with explicit pins
     SPI.begin(_sckPin, _misoPin, _mosiPin, _ssPin);
     Serial.println("[RFID] SPI bus initialized");
+    
+    // Add a small delay for hardware to stabilize
+    delay(100);
 #  else
     Serial.printf("[RFID] Initializing PN532 I2C (IRQ=%d, RST=%d, SDA=%d, SCL=%d)\n",
                   _irqPin, _resetPin, _sdaPin, _sclPin);
 
     Wire.begin(_sdaPin, _sclPin);
     Serial.println("[RFID] I2C bus initialized");
+    delay(100);
 #  endif
 
+    Serial.println("[RFID] Calling PN532 begin()...");
     _pn532.begin();
+    delay(100); // Give the module time to wake up
 
-    uint32_t version = _pn532.getFirmwareVersion();
+    Serial.println("[RFID] Attempting to get firmware version...");
+    
+    // Try multiple times with delays
+    uint32_t version = 0;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      Serial.printf("[RFID] Firmware version attempt %d/3...\n", attempt);
+      version = _pn532.getFirmwareVersion();
+      if (version) {
+        break;
+      }
+      Serial.println("[RFID] No response, retrying...");
+      delay(500);
+    }
+    
     if (!version) {
-      Serial.println("[RFID] Failed to find PN532. Check wiring.");
+      Serial.println("[RFID] Failed to find PN532 after 3 attempts.");
+      Serial.println("[RFID] Troubleshooting checklist:");
+      Serial.println("[RFID]   1. Check DIP switches: SW1=OFF, SW2=ON for SPI mode");
+      Serial.println("[RFID]   2. Verify wiring matches Config.h pin definitions");
+      Serial.println("[RFID]   3. Ensure PN532 is powered with 3.3V (NOT 5V)");
+      Serial.println("[RFID]   4. Check for loose connections");
+      Serial.println("[RFID]   5. Try with shorter wires (<20cm)");
       return false;
     }
 
     Serial.printf("[RFID] PN532 firmware: v%lu.%lu (0x%08lX)\n",
                   (version >> 24) & 0xFF, (version >> 16) & 0xFF, version);
 
+    Serial.println("[RFID] Configuring SAM...");
     if (!_pn532.SAMConfig()) {
       Serial.println("[RFID] PN532 SAM configuration failed");
       return false;
@@ -170,7 +195,7 @@ public:
     _initialised = true;
     return true;
   }
-
+  
   bool readCard(String &uidHex) override {
     if (!_initialised) {
       return false;
@@ -204,7 +229,6 @@ private:
   uint8_t        _sckPin;
   uint8_t        _mosiPin;
   uint8_t        _misoPin;
-  PN532_SPI      _pn532spi;
 #  else
   uint8_t        _sdaPin;
   uint8_t        _sclPin;
