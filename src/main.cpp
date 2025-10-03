@@ -30,7 +30,25 @@ enum class VisualState {
 static VisualState baseVisualState = VisualState::WifiConnecting;
 static VisualState currentVisualState = VisualState::WifiConnecting;
 static unsigned long visualStateChangedAt = 0;
-static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
+static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 4000;
+
+static const char *visualStateName(VisualState state) {
+  switch (state) {
+    case VisualState::WifiConnecting:
+      return "WifiConnecting";
+    case VisualState::WifiConnected:
+      return "WifiConnected";
+    case VisualState::WifiError:
+      return "WifiError";
+    case VisualState::CardDetected:
+      return "CardDetected";
+    case VisualState::BackendSuccess:
+      return "BackendSuccess";
+    case VisualState::BackendError:
+      return "BackendError";
+  }
+  return "Unknown";
+}
 
 static bool isTransientState(VisualState state) {
   return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
@@ -65,12 +83,20 @@ static void applyVisualState(VisualState state, unsigned long now) {
 }
 
 static void setVisualState(VisualState state, unsigned long now) {
+  if (currentVisualState != state) {
+    Serial.printf("[State] Transitioning from %s to %s at %lums\n",
+                  visualStateName(currentVisualState), visualStateName(state), now);
+  }
   currentVisualState = state;
   visualStateChangedAt = now;
   applyVisualState(state, now);
 }
 
 static void setBaseVisualState(VisualState state, unsigned long now) {
+  if (baseVisualState != state) {
+    Serial.printf("[State] Base visual state set to %s at %lums\n",
+                  visualStateName(state), now);
+  }
   baseVisualState = state;
   if (!isTransientState(currentVisualState) || currentVisualState == state) {
     setVisualState(state, now);
@@ -80,6 +106,10 @@ static void setBaseVisualState(VisualState state, unsigned long now) {
 static void refreshVisualState(unsigned long now) {
   if (isTransientState(currentVisualState) &&
       now - visualStateChangedAt >= TRANSIENT_EFFECT_DURATION_MS) {
+    Serial.printf("[State] Transient %s expired after %lums, reverting to %s\n",
+                  visualStateName(currentVisualState),
+                  now - visualStateChangedAt,
+                  visualStateName(baseVisualState));
     setVisualState(baseVisualState, now);
   }
 }
@@ -225,7 +255,7 @@ void loop() {
     }
   }
 
-  now = millis();
-  refreshVisualState(now);
-  effects.update(now);
+  const unsigned long effectsNow = millis();
+  refreshVisualState(effectsNow);
+  effects.update(effectsNow);
 }

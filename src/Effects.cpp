@@ -126,9 +126,14 @@ void BreathingEffect::setPeriod(unsigned long periodMs) {
   _periodMs = periodMs == 0 ? 1 : periodMs;
 }
 
+namespace {
+constexpr float kBreathingMinIntensity = 0.1f;
+constexpr float kBreathingRange = 1.0f - kBreathingMinIntensity;
+}
+
 void BreathingEffect::begin(unsigned long now) {
   _startTime = now;
-  applyIntensity(0.0f);
+  applyIntensity(kBreathingMinIntensity);
 }
 
 void BreathingEffect::update(unsigned long now) {
@@ -136,7 +141,8 @@ void BreathingEffect::update(unsigned long now) {
   unsigned long period = _periodMs == 0 ? 1 : _periodMs;
   float phase = static_cast<float>(elapsed % period) / static_cast<float>(period);
   float intensity = 0.5f * (1.0f - cosf(phase * 2.0f * static_cast<float>(M_PI)));
-  applyIntensity(intensity);
+  float adjustedIntensity = kBreathingMinIntensity + (kBreathingRange * intensity);
+  applyIntensity(adjustedIntensity);
 }
 
 void BreathingEffect::applyIntensity(float intensity) {
