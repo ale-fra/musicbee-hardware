@@ -113,6 +113,200 @@ void SnakeEffect::draw() {
   strip().apply();
 }
 
+CometEffect::CometEffect(uint8_t red, uint8_t green, uint8_t blue,
+                         float firstTailFactor, float secondTailFactor,
+                         unsigned long intervalMs, Direction direction)
+    : _red(red),
+      _green(green),
+      _blue(blue),
+      _firstTailFactor(firstTailFactor),
+      _secondTailFactor(secondTailFactor),
+      _intervalMs(intervalMs),
+      _lastStep(0),
+      _position(0),
+      _direction(direction) {}
+
+void CometEffect::setColor(uint8_t red, uint8_t green, uint8_t blue) {
+  _red = red;
+  _green = green;
+  _blue = blue;
+}
+
+void CometEffect::setTailFactors(float firstTailFactor, float secondTailFactor) {
+  _firstTailFactor = firstTailFactor;
+  _secondTailFactor = secondTailFactor;
+}
+
+void CometEffect::setInterval(unsigned long intervalMs) {
+  _intervalMs = intervalMs == 0 ? 1 : intervalMs;
+}
+
+void CometEffect::setDirection(Direction direction) {
+  _direction = direction;
+}
+
+void CometEffect::begin(unsigned long now) {
+  _position = 0;
+  _lastStep = now;
+  draw();
+}
+
+void CometEffect::update(unsigned long now) {
+  if (ledCount() == 0) {
+    return;
+  }
+
+  if (now - _lastStep < _intervalMs) {
+    return;
+  }
+
+  _lastStep = now;
+  if (_direction == Direction::Clockwise) {
+    _position = (_position + 1) % ledCount();
+  } else {
+    _position = (_position + ledCount() - 1) % ledCount();
+  }
+  draw();
+}
+
+void CometEffect::draw() {
+  strip().setAll(strip().color(0, 0, 0));
+
+  if (ledCount() == 0) {
+    strip().apply();
+    return;
+  }
+
+  uint32_t head = strip().color(_red, _green, _blue);
+  strip().setPixel(_position, head);
+
+  if (ledCount() > 1) {
+    uint16_t firstTailIndex = 0;
+    if (_direction == Direction::Clockwise) {
+      firstTailIndex = (_position + ledCount() - 1) % ledCount();
+    } else {
+      firstTailIndex = (_position + 1) % ledCount();
+    }
+    strip().setPixel(firstTailIndex, scaledColor(_firstTailFactor));
+  }
+
+  if (ledCount() > 2) {
+    uint16_t secondTailIndex = 0;
+    if (_direction == Direction::Clockwise) {
+      secondTailIndex = (_position + ledCount() - 2) % ledCount();
+    } else {
+      secondTailIndex = (_position + 2) % ledCount();
+    }
+    strip().setPixel(secondTailIndex, scaledColor(_secondTailFactor));
+  }
+
+  strip().apply();
+}
+
+uint32_t CometEffect::scaledColor(float factor) {
+  float clamped = factor;
+  if (clamped < 0.0f) {
+    clamped = 0.0f;
+  } else if (clamped > 1.0f) {
+    clamped = 1.0f;
+  }
+
+  auto scale = [clamped](uint8_t component) -> uint8_t {
+    float value = static_cast<float>(component) * clamped;
+    if (value <= 0.0f) {
+      return 0;
+    }
+    if (value >= 255.0f) {
+      return 255;
+    }
+    return static_cast<uint8_t>(value + 0.5f);
+  };
+
+  return strip().color(scale(_red), scale(_green), scale(_blue));
+}
+
+FadeEffect::FadeEffect(uint8_t startRed, uint8_t startGreen, uint8_t startBlue,
+                       uint8_t endRed, uint8_t endGreen, uint8_t endBlue,
+                       unsigned long durationMs)
+    : _startRed(startRed),
+      _startGreen(startGreen),
+      _startBlue(startBlue),
+      _endRed(endRed),
+      _endGreen(endGreen),
+      _endBlue(endBlue),
+      _durationMs(durationMs),
+      _startTime(0),
+      _complete(false) {}
+
+void FadeEffect::setColors(uint8_t startRed, uint8_t startGreen, uint8_t startBlue,
+                           uint8_t endRed, uint8_t endGreen, uint8_t endBlue) {
+  _startRed = startRed;
+  _startGreen = startGreen;
+  _startBlue = startBlue;
+  _endRed = endRed;
+  _endGreen = endGreen;
+  _endBlue = endBlue;
+}
+
+void FadeEffect::setDuration(unsigned long durationMs) {
+  _durationMs = durationMs;
+}
+
+void FadeEffect::begin(unsigned long now) {
+  _startTime = now;
+  _complete = false;
+  apply(0.0f);
+}
+
+void FadeEffect::update(unsigned long now) {
+  if (_complete && _durationMs != 0) {
+    return;
+  }
+
+  if (_durationMs == 0) {
+    apply(1.0f);
+    _complete = true;
+    return;
+  }
+
+  unsigned long elapsed = now - _startTime;
+  float progress = static_cast<float>(elapsed) / static_cast<float>(_durationMs);
+  if (progress >= 1.0f) {
+    apply(1.0f);
+    _complete = true;
+  } else {
+    apply(progress);
+  }
+}
+
+void FadeEffect::apply(float progress) {
+  float clamped = progress;
+  if (clamped < 0.0f) {
+    clamped = 0.0f;
+  } else if (clamped > 1.0f) {
+    clamped = 1.0f;
+  }
+
+  auto lerp = [clamped](uint8_t start, uint8_t end) -> uint8_t {
+    float value = static_cast<float>(start) + (static_cast<float>(end) - static_cast<float>(start)) * clamped;
+    if (value <= 0.0f) {
+      return 0;
+    }
+    if (value >= 255.0f) {
+      return 255;
+    }
+    return static_cast<uint8_t>(value + 0.5f);
+  };
+
+  uint8_t red = lerp(_startRed, _endRed);
+  uint8_t green = lerp(_startGreen, _endGreen);
+  uint8_t blue = lerp(_startBlue, _endBlue);
+
+  uint32_t colorValue = strip().color(red, green, blue);
+  strip().setAll(colorValue);
+  strip().apply();
+}
+
 BreathingEffect::BreathingEffect(uint8_t red, uint8_t green, uint8_t blue, unsigned long periodMs)
     : _red(red), _green(green), _blue(blue), _periodMs(periodMs), _startTime(0) {}
 
@@ -126,9 +320,14 @@ void BreathingEffect::setPeriod(unsigned long periodMs) {
   _periodMs = periodMs == 0 ? 1 : periodMs;
 }
 
+namespace {
+constexpr float kBreathingMinIntensity = 0.1f;
+constexpr float kBreathingRange = 1.0f - kBreathingMinIntensity;
+}
+
 void BreathingEffect::begin(unsigned long now) {
   _startTime = now;
-  applyIntensity(0.0f);
+  applyIntensity(kBreathingMinIntensity);
 }
 
 void BreathingEffect::update(unsigned long now) {
@@ -136,7 +335,8 @@ void BreathingEffect::update(unsigned long now) {
   unsigned long period = _periodMs == 0 ? 1 : _periodMs;
   float phase = static_cast<float>(elapsed % period) / static_cast<float>(period);
   float intensity = 0.5f * (1.0f - cosf(phase * 2.0f * static_cast<float>(M_PI)));
-  applyIntensity(intensity);
+  float adjustedIntensity = kBreathingMinIntensity + (kBreathingRange * intensity);
+  applyIntensity(adjustedIntensity);
 }
 
 void BreathingEffect::applyIntensity(float intensity) {

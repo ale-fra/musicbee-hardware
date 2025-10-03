@@ -74,6 +74,65 @@ private:
   uint16_t _position;
 };
 
+class CometEffect : public Effect {
+public:
+  enum class Direction { Clockwise, CounterClockwise };
+
+  CometEffect(uint8_t red = 255, uint8_t green = 255, uint8_t blue = 255,
+              float firstTailFactor = 0.5f, float secondTailFactor = 0.2f,
+              unsigned long intervalMs = 50UL,
+              Direction direction = Direction::Clockwise);
+
+  void setColor(uint8_t red, uint8_t green, uint8_t blue);
+  void setTailFactors(float firstTailFactor, float secondTailFactor);
+  void setInterval(unsigned long intervalMs);
+  void setDirection(Direction direction);
+
+  void begin(unsigned long now) override;
+  void update(unsigned long now) override;
+
+private:
+  void draw();
+  uint32_t scaledColor(float factor);
+
+  uint8_t _red;
+  uint8_t _green;
+  uint8_t _blue;
+  float _firstTailFactor;
+  float _secondTailFactor;
+  unsigned long _intervalMs;
+  unsigned long _lastStep;
+  uint16_t _position;
+  Direction _direction;
+};
+
+class FadeEffect : public Effect {
+public:
+  FadeEffect(uint8_t startRed = 255, uint8_t startGreen = 0, uint8_t startBlue = 0,
+             uint8_t endRed = 0, uint8_t endGreen = 0, uint8_t endBlue = 0,
+             unsigned long durationMs = 300UL);
+
+  void setColors(uint8_t startRed, uint8_t startGreen, uint8_t startBlue,
+                 uint8_t endRed, uint8_t endGreen, uint8_t endBlue);
+  void setDuration(unsigned long durationMs);
+
+  void begin(unsigned long now) override;
+  void update(unsigned long now) override;
+
+private:
+  void apply(float progress);
+
+  uint8_t _startRed;
+  uint8_t _startGreen;
+  uint8_t _startBlue;
+  uint8_t _endRed;
+  uint8_t _endGreen;
+  uint8_t _endBlue;
+  unsigned long _durationMs;
+  unsigned long _startTime;
+  bool _complete;
+};
+
 class BreathingEffect : public Effect {
 public:
   BreathingEffect(uint8_t red = 0, uint8_t green = 0, uint8_t blue = 255, unsigned long periodMs = 2000UL);
