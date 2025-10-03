@@ -9,7 +9,9 @@ EffectManager::EffectManager(uint8_t dataPin, uint16_t ledCount, uint8_t default
       _activeEffect(nullptr),
       _solidEffect(),
       _snakeEffect(),
-      _breathingEffect() {}
+      _breathingEffect(),
+      _cometEffect(),
+      _fadeEffect() {}
 
 void EffectManager::begin(unsigned long now) {
   (void)now;
@@ -53,6 +55,41 @@ void EffectManager::showBreathing(uint8_t red, uint8_t green, uint8_t blue, unsi
   Serial.printf("[Effects] Activating Breathing (R:%u G:%u B:%u) at %lums\n",
                 red, green, blue, now);
   activateEffect(_breathingEffect, now);
+}
+
+void EffectManager::showComet(uint8_t red, uint8_t green, uint8_t blue,
+                              float firstTailFactor, float secondTailFactor,
+                              CometEffect::Direction direction,
+                              unsigned long intervalMs, unsigned long now) {
+  _cometEffect.setColor(red, green, blue);
+  _cometEffect.setTailFactors(firstTailFactor, secondTailFactor);
+  _cometEffect.setDirection(direction);
+  _cometEffect.setInterval(intervalMs);
+  Serial.printf("[Effects] Activating Comet (R:%u G:%u B:%u, tail %.2f/%.2f, %s, %lums)\n",
+                red,
+                green,
+                blue,
+                firstTailFactor,
+                secondTailFactor,
+                direction == CometEffect::Direction::Clockwise ? "CW" : "CCW",
+                intervalMs);
+  activateEffect(_cometEffect, now);
+}
+
+void EffectManager::showFade(uint8_t startRed, uint8_t startGreen, uint8_t startBlue,
+                             uint8_t endRed, uint8_t endGreen, uint8_t endBlue,
+                             unsigned long durationMs, unsigned long now) {
+  _fadeEffect.setColors(startRed, startGreen, startBlue, endRed, endGreen, endBlue);
+  _fadeEffect.setDuration(durationMs);
+  Serial.printf("[Effects] Activating Fade (from %u,%u,%u to %u,%u,%u over %lums)\n",
+                startRed,
+                startGreen,
+                startBlue,
+                endRed,
+                endGreen,
+                endBlue,
+                durationMs);
+  activateEffect(_fadeEffect, now);
 }
 
 void EffectManager::setBrightness(uint8_t brightness) {

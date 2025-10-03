@@ -74,7 +74,7 @@ static constexpr uint8_t PN532_MISO_PIN = 13;  // SPI MISO
 // Addressable LED strip configuration (WS2812/NeoPixel)
 static constexpr uint8_t  LED_DATA_PIN           = 48;  // Data in to the strip
 static constexpr uint16_t LED_COUNT_DEFAULT      = 11;  // Number of pixels in the strip
-static constexpr uint8_t  LED_BRIGHTNESS_DEFAULT = 64;  // 0-255 brightness scaling
+static constexpr uint8_t  LED_BRIGHTNESS_DEFAULT = 200; // 0-255 brightness scaling
 
 // Debounce interval (ms) to ignore repeated reads of the same card.
 static constexpr unsigned long CARD_DEBOUNCE_MS = 800;
