@@ -160,3 +160,62 @@ void BreathingEffect::applyIntensity(float intensity) {
   strip().apply();
 }
 
+BlinkEffect::BlinkEffect()
+    : _red(0),
+      _green(0),
+      _blue(0),
+      _onDurationMs(100),
+      _offDurationMs(100),
+      _blinkCount(0),
+      _completedBlinks(0),
+      _currentStateOn(false),
+      _finished(true),
+      _lastToggle(0) {}
+
+void BlinkEffect::configure(uint8_t red, uint8_t green, uint8_t blue,
+                            unsigned long onDurationMs, unsigned long offDurationMs,
+                            uint16_t blinkCount) {
+  _red = red;
+  _green = green;
+  _blue = blue;
+  _onDurationMs = onDurationMs == 0 ? 1UL : onDurationMs;
+  _offDurationMs = offDurationMs == 0 ? 1UL : offDurationMs;
+  _blinkCount = blinkCount;
+}
+
+void BlinkEffect::begin(unsigned long now) {
+  _completedBlinks = 0;
+  _lastToggle = now;
+  _finished = (_blinkCount == 0);
+  _currentStateOn = !_finished && _blinkCount > 0;
+  applyState(_currentStateOn);
+}
+
+void BlinkEffect::update(unsigned long now) {
+  if (_finished) {
+    return;
+  }
+
+  unsigned long duration = _currentStateOn ? _onDurationMs : _offDurationMs;
+  if (now - _lastToggle < duration) {
+    return;
+  }
+
+  _lastToggle = now;
+  _currentStateOn = !_currentStateOn;
+  applyState(_currentStateOn);
+
+  if (!_currentStateOn) {
+    ++_completedBlinks;
+    if (_completedBlinks >= _blinkCount) {
+      _finished = true;
+    }
+  }
+}
+
+void BlinkEffect::applyState(bool on) {
+  uint32_t color = on ? strip().color(_red, _green, _blue) : strip().color(0, 0, 0);
+  strip().setAll(color);
+  strip().apply();
+}
+

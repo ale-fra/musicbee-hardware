@@ -19,6 +19,7 @@ static BackendClient backend;
 static EffectManager effects(LED_DATA_PIN, LED_COUNT_DEFAULT, LED_BRIGHTNESS_DEFAULT);
 
 enum class VisualState {
+  BootWarmWhite,
   WifiConnecting,
   WifiConnected,
   WifiError,
@@ -27,10 +28,16 @@ enum class VisualState {
   BackendError
 };
 
-static VisualState baseVisualState = VisualState::WifiConnecting;
-static VisualState currentVisualState = VisualState::WifiConnecting;
+static VisualState baseVisualState = VisualState::BootWarmWhite;
+static VisualState currentVisualState = VisualState::BootWarmWhite;
+static VisualState resumeVisualState = VisualState::BootWarmWhite;
 static unsigned long visualStateChangedAt = 0;
 static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
+static constexpr unsigned long BOOT_WINDOW_DURATION_MS = 10000;
+
+static unsigned long startupMillis = 0;
+static bool bootWindowElapsed = false;
+static VisualState desiredWifiState = VisualState::WifiConnecting;
 
 static bool isTransientState(VisualState state) {
   return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
@@ -39,6 +46,10 @@ static bool isTransientState(VisualState state) {
 
 static void applyVisualState(VisualState state, unsigned long now) {
   switch (state) {
+    case VisualState::BootWarmWhite:
+      effects.breathingEffect().setPeriod(1800);
+      effects.showBreathing(255, 244, 229, now);
+      break;
     case VisualState::WifiConnecting:
       effects.breathingEffect().setPeriod(1500);
       effects.showBreathing(0, 0, 255, now);
@@ -50,8 +61,7 @@ static void applyVisualState(VisualState state, unsigned long now) {
       effects.showSolidColor(255, 0, 0, now);
       break;
     case VisualState::CardDetected:
-      effects.breathingEffect().setPeriod(600);
-      effects.showBreathing(255, 180, 60, now);
+      effects.showBlink(0, 255, 0, 120, 80, 3, now);
       break;
     case VisualState::BackendSuccess:
       effects.snakeEffect().setInterval(90);
@@ -65,6 +75,11 @@ static void applyVisualState(VisualState state, unsigned long now) {
 }
 
 static void setVisualState(VisualState state, unsigned long now) {
+  if (isTransientState(state)) {
+    resumeVisualState = baseVisualState;
+  } else {
+    resumeVisualState = state;
+  }
   currentVisualState = state;
   visualStateChangedAt = now;
   applyVisualState(state, now);
@@ -72,6 +87,7 @@ static void setVisualState(VisualState state, unsigned long now) {
 
 static void setBaseVisualState(VisualState state, unsigned long now) {
   baseVisualState = state;
+  resumeVisualState = state;
   if (!isTransientState(currentVisualState) || currentVisualState == state) {
     setVisualState(state, now);
   }
@@ -79,7 +95,10 @@ static void setBaseVisualState(VisualState state, unsigned long now) {
 
 static void refreshVisualState(unsigned long now) {
   if (isTransientState(currentVisualState) &&
-      now - visualStateChangedAt >= TRANSIENT_EFFECT_DURATION_MS) {
+      (effects.isActiveEffectFinished() ||
+       now - visualStateChangedAt >= TRANSIENT_EFFECT_DURATION_MS)) {
+    setVisualState(resumeVisualState, now);
+  } else if (!isTransientState(currentVisualState) && currentVisualState != baseVisualState) {
     setVisualState(baseVisualState, now);
   }
 }
@@ -134,18 +153,25 @@ void setup() {
   Serial.println("Initializing LED strip...");
   unsigned long now = millis();
   effects.begin(now);
-  setBaseVisualState(VisualState::WifiConnecting, now);
+  startupMillis = now;
+  bootWindowElapsed = false;
+  desiredWifiState = VisualState::WifiConnecting;
+  setBaseVisualState(VisualState::BootWarmWhite, now);
 
   // Connect to Wi-Fi
   Serial.println("Starting Wi-Fi connection...");
   if (!wifi.begin()) {
     Serial.println("Initial Wi-Fi connection failed. The device will continue retrying in the background.");
-    setBaseVisualState(VisualState::WifiError, millis());
+    desiredWifiState = VisualState::WifiError;
   } else {
-    Serial.println("Wi-Fi connected successfully!");
-    unsigned long connectedNow = millis();
-    setBaseVisualState(VisualState::WifiConnected, connectedNow);
-    initializeMdns();
+    if (wifi.isConnected()) {
+      Serial.println("Wi-Fi connected successfully!");
+      desiredWifiState = VisualState::WifiConnected;
+      initializeMdns();
+    } else {
+      Serial.println("Wi-Fi connection attempt started. Waiting for link...");
+      desiredWifiState = VisualState::WifiConnecting;
+    }
   }
 
   wifiPreviouslyConnected = wifi.isConnected();
@@ -171,11 +197,22 @@ void loop() {
   bool isConnected = wifi.isConnected();
   if (isConnected && !wifiPreviouslyConnected) {
     initializeMdns();
-    setBaseVisualState(VisualState::WifiConnected, now);
+    desiredWifiState = VisualState::WifiConnected;
   } else if (!isConnected && wifiPreviouslyConnected) {
     mdnsStarted = false;
-    setBaseVisualState(VisualState::WifiConnecting, now);
+    desiredWifiState = VisualState::WifiConnecting;
   }
+
+  if (!bootWindowElapsed) {
+    unsigned long uptime = now - startupMillis;
+    if (uptime >= BOOT_WINDOW_DURATION_MS) {
+      bootWindowElapsed = true;
+      setBaseVisualState(desiredWifiState, now);
+    }
+  } else if (baseVisualState != desiredWifiState) {
+    setBaseVisualState(desiredWifiState, now);
+  }
+
   wifiPreviouslyConnected = isConnected;
 
   // Print periodic status (every 10 seconds)
