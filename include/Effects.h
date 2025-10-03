@@ -14,6 +14,7 @@ public:
 
   virtual void begin(unsigned long now) = 0;
   virtual void update(unsigned long now) = 0;
+  virtual bool isFinished() const { return false; }
 
   void attachStrip(LedStrip *strip, uint16_t ledCount);
 
@@ -92,5 +93,32 @@ private:
   uint8_t _blue;
   unsigned long _periodMs;
   unsigned long _startTime;
+};
+
+class BlinkEffect : public Effect {
+public:
+  BlinkEffect();
+
+  void configure(uint8_t red, uint8_t green, uint8_t blue,
+                 unsigned long onDurationMs, unsigned long offDurationMs,
+                 uint16_t blinkCount);
+
+  void begin(unsigned long now) override;
+  void update(unsigned long now) override;
+  bool isFinished() const override { return _finished; }
+
+private:
+  void applyState(bool on);
+
+  uint8_t _red;
+  uint8_t _green;
+  uint8_t _blue;
+  unsigned long _onDurationMs;
+  unsigned long _offDurationMs;
+  uint16_t _blinkCount;
+  uint16_t _completedBlinks;
+  bool _currentStateOn;
+  bool _finished;
+  unsigned long _lastToggle;
 };
 

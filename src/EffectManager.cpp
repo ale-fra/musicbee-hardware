@@ -9,7 +9,8 @@ EffectManager::EffectManager(uint8_t dataPin, uint16_t ledCount, uint8_t default
       _activeEffect(nullptr),
       _solidEffect(),
       _snakeEffect(),
-      _breathingEffect() {}
+      _breathingEffect(),
+      _blinkEffect() {}
 
 void EffectManager::begin(unsigned long now) {
   (void)now;
@@ -48,12 +49,25 @@ void EffectManager::showBreathing(uint8_t red, uint8_t green, uint8_t blue, unsi
   activateEffect(_breathingEffect, now);
 }
 
+void EffectManager::showBlink(uint8_t red, uint8_t green, uint8_t blue, unsigned long onDurationMs,
+                              unsigned long offDurationMs, uint16_t blinkCount, unsigned long now) {
+  _blinkEffect.configure(red, green, blue, onDurationMs, offDurationMs, blinkCount);
+  activateEffect(_blinkEffect, now);
+}
+
 void EffectManager::setBrightness(uint8_t brightness) {
   _brightness = brightness;
   _strip.setBrightness(brightness);
   if (_activeEffect != nullptr) {
     _activeEffect->update(millis());
   }
+}
+
+bool EffectManager::isActiveEffectFinished() const {
+  if (_activeEffect == nullptr) {
+    return true;
+  }
+  return _activeEffect->isFinished();
 }
 
 void EffectManager::activateEffect(Effect &effect, unsigned long now) {

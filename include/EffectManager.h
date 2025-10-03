@@ -20,9 +20,12 @@ public:
   void showSolidColor(uint8_t red, uint8_t green, uint8_t blue, unsigned long now);
   void showSnake(uint8_t red, uint8_t green, uint8_t blue, unsigned long now);
   void showBreathing(uint8_t red, uint8_t green, uint8_t blue, unsigned long now);
+  void showBlink(uint8_t red, uint8_t green, uint8_t blue, unsigned long onDurationMs,
+                 unsigned long offDurationMs, uint16_t blinkCount, unsigned long now);
 
   void setBrightness(uint8_t brightness);
   uint8_t brightness() const { return _brightness; }
+  bool isActiveEffectFinished() const;
 
   LedStrip &strip() { return _strip; }
   uint16_t ledCount() const { return _ledCount; }
@@ -30,6 +33,7 @@ public:
   SolidColorEffect &solidEffect() { return _solidEffect; }
   SnakeEffect &snakeEffect() { return _snakeEffect; }
   BreathingEffect &breathingEffect() { return _breathingEffect; }
+  BlinkEffect &blinkEffect() { return _blinkEffect; }
 
 private:
   void activateEffect(Effect &effect, unsigned long now);
@@ -41,5 +45,6 @@ private:
   SolidColorEffect _solidEffect;
   SnakeEffect _snakeEffect;
   BreathingEffect _breathingEffect;
+  BlinkEffect _blinkEffect;
 };
 
