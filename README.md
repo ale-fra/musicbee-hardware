@@ -7,6 +7,7 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 - Supports MFRC522 (SPI) and PN532 (I²C or SPI) NFC modules selected at compile time.
 - Wi-Fi connection management with automatic retry and optional mDNS discovery for `.local` backends.
 - RGB status LED with success, error, and connectivity feedback patterns.
+- Optional debug HTTP server for remote visual testing and simulated card scans.
 
 ## Hardware Requirements
 - ESP32 development board (tested with AZ-Delivery Devkit V4).
@@ -42,7 +43,7 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 
 ## Firmware Configuration
 1. Copy `include/secrets.example.h` to `include/secrets.h` and fill in Wi-Fi credentials plus backend host/port constants.
-2. Adjust `Config.h` if you change reader type, pin assignments, debounce timing, or LED configuration.
+2. Adjust `Config.h` if you change reader type, pin assignments, debounce timing, LED configuration, or enable the debug action server (`ENABLE_DEBUG_ACTIONS` / `DEBUG_SERVER_PORT`).
 
 ## Build and Flash
 1. Install PlatformIO.
@@ -74,6 +75,71 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 * During the main loop it keeps Wi-Fi alive, debounces repeated card reads, and sends accepted UIDs to the backend API at `/api/v1/cards/{uid}/play`.
 * LED feedback indicates state: green blink for success, red for errors, blue for connection attempts.
 * Backend responses and errors are printed over serial to help with troubleshooting.
+
+## Debug Action Server
+
+Enable the optional HTTP server by setting `ENABLE_DEBUG_ACTIONS` to `true` in `include/Config.h`. The firmware starts the server on `DEBUG_SERVER_PORT` whenever Wi-Fi is connected, allowing you to trigger effects or simulate NFC scans over the network.
+
+* **List available actions**
+
+  ```http
+  GET /debug/actions
+  ```
+
+  Response example:
+
+  ```json
+  {
+    "ok": true,
+    "actions": [
+      { "name": "set_visual_state", "description": "Set or override the current LED state." },
+      { "name": "preview_effect", "description": "Preview an LED effect with custom colours." },
+      { "name": "simulate_card", "description": "Simulate an NFC card scan with an arbitrary UID." }
+    ]
+  }
+  ```
+
+* **Set the current LED state**
+
+  ```http
+  POST /debug/actions/set_visual_state
+  Content-Type: application/json
+
+  {
+    "state": "backend_success",
+    "apply_to_base": false
+  }
+  ```
+
+* **Preview a specific effect**
+
+  ```http
+  POST /debug/actions/preview_effect
+  Content-Type: application/json
+
+  {
+    "type": "breathing",
+    "r": 255,
+    "g": 120,
+    "b": 40,
+    "period_ms": 900
+  }
+  ```
+
+* **Simulate a card scan**
+
+  ```http
+  POST /debug/actions/simulate_card
+  Content-Type: application/json
+
+  {
+    "uid": "04A224D9123480",
+    "bypass_debounce": true,
+    "send_to_backend": false
+  }
+  ```
+
+The action responses share a common envelope (`{"ok":true/false,"message":"..."}`) and return 4xx status codes for invalid JSON or unknown actions.
 
 ## Troubleshooting
 
