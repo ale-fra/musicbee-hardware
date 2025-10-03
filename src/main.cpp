@@ -13,6 +13,10 @@
 #include "BackendClient.h"
 #include "EffectManager.h"
 
+#if ENABLE_DEBUG_ACTIONS
+#  include "DebugActionServer.h"
+#endif
+
 static WifiManager wifi;
 static RfidReader rfid;
 static BackendClient backend;
@@ -91,6 +95,223 @@ static unsigned long lastDebugTime = 0;
 static bool mdnsStarted = false;
 static bool wifiPreviouslyConnected = false;
 
+#if ENABLE_DEBUG_ACTIONS
+static DebugActionServer debugServer(DEBUG_SERVER_PORT);
+#endif
+
+enum class CardProcessResult {
+  DuplicateIgnored,
+  BackendSkipped,
+  BackendSuccess,
+  BackendFailure,
+  WifiDisconnected
+};
+
+static CardProcessResult processCardUid(const String &uid, unsigned long now,
+                                       bool bypassDebounce, bool sendToBackend) {
+  Serial.println("*** CARD DETECTED ***");
+  Serial.printf("Raw UID: %s (length: %d)\n", uid.c_str(), uid.length());
+
+  setVisualState(VisualState::CardDetected, now);
+
+  bool isDuplicate = !bypassDebounce && uid == lastUid &&
+                     (now - lastReadTime) < CARD_DEBOUNCE_MS;
+  if (isDuplicate) {
+    Serial.printf("[DEBOUNCE] Ignoring repeated read (last read %lu ms ago)\n",
+                  now - lastReadTime);
+    return CardProcessResult::DuplicateIgnored;
+  }
+
+  lastUid = uid;
+  lastReadTime = now;
+  Serial.printf("Card accepted: UID=%s\n", uid.c_str());
+
+  if (!sendToBackend) {
+    Serial.println("[DEBUG] Backend request skipped (sendToBackend=false).");
+    unsigned long updatedNow = millis();
+    setVisualState(VisualState::BackendSuccess, updatedNow);
+    Serial.println("*** END CARD PROCESSING ***\n");
+    return CardProcessResult::BackendSkipped;
+  }
+
+  if (!wifi.isConnected()) {
+    Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
+    unsigned long updatedNow = millis();
+    setVisualState(VisualState::BackendError, updatedNow);
+    Serial.println("*** END CARD PROCESSING ***\n");
+    return CardProcessResult::WifiDisconnected;
+  }
+
+  Serial.println("Sending request to backend...");
+  bool ok = backend.postPlay(uid);
+  unsigned long updatedNow = millis();
+  if (ok) {
+    Serial.println("[SUCCESS] Backend request successful");
+    setVisualState(VisualState::BackendSuccess, updatedNow);
+    Serial.println("*** END CARD PROCESSING ***\n");
+    return CardProcessResult::BackendSuccess;
+  }
+
+  Serial.println("[ERROR] Backend request failed");
+  setVisualState(VisualState::BackendError, updatedNow);
+  Serial.println("*** END CARD PROCESSING ***\n");
+  return CardProcessResult::BackendFailure;
+}
+
+#if ENABLE_DEBUG_ACTIONS
+static bool parseVisualState(const String &value, VisualState &state) {
+  String normalized = value;
+  normalized.toLowerCase();
+
+  if (normalized == "wifi_connecting") {
+    state = VisualState::WifiConnecting;
+    return true;
+  }
+  if (normalized == "wifi_connected") {
+    state = VisualState::WifiConnected;
+    return true;
+  }
+  if (normalized == "wifi_error") {
+    state = VisualState::WifiError;
+    return true;
+  }
+  if (normalized == "card_detected") {
+    state = VisualState::CardDetected;
+    return true;
+  }
+  if (normalized == "backend_success") {
+    state = VisualState::BackendSuccess;
+    return true;
+  }
+  if (normalized == "backend_error") {
+    state = VisualState::BackendError;
+    return true;
+  }
+  return false;
+}
+
+static bool handleSetVisualState(JsonVariantConst payload, String &message) {
+  if (!payload.is<JsonObjectConst>()) {
+    message = "Payload must be a JSON object.";
+    return false;
+  }
+
+  JsonObjectConst obj = payload.as<JsonObjectConst>();
+  const char *stateName = obj["state"] | nullptr;
+  if (stateName == nullptr) {
+    message = "Missing 'state' field.";
+    return false;
+  }
+
+  VisualState state;
+  if (!parseVisualState(String(stateName), state)) {
+    message = "Unknown state value.";
+    return false;
+  }
+
+  bool applyToBase = obj["apply_to_base"] | false;
+  unsigned long now = millis();
+  if (applyToBase) {
+    setBaseVisualState(state, now);
+    message = "Base visual state updated.";
+  } else {
+    setVisualState(state, now);
+    message = "Visual state updated.";
+  }
+
+  return true;
+}
+
+static bool handlePreviewEffect(JsonVariantConst payload, String &message) {
+  if (!payload.is<JsonObjectConst>()) {
+    message = "Payload must be a JSON object.";
+    return false;
+  }
+
+  JsonObjectConst obj = payload.as<JsonObjectConst>();
+  const char *typeName = obj["type"] | nullptr;
+  if (typeName == nullptr) {
+    message = "Missing 'type' field.";
+    return false;
+  }
+
+  uint8_t r = obj["r"] | 0;
+  uint8_t g = obj["g"] | 0;
+  uint8_t b = obj["b"] | 0;
+  unsigned long now = millis();
+
+  String type = String(typeName);
+  type.toLowerCase();
+
+  if (type == "solid") {
+    effects.showSolidColor(r, g, b, now);
+    message = "Solid color preview displayed.";
+    return true;
+  }
+
+  if (type == "breathing") {
+    unsigned long period = obj["period_ms"] | 1500;
+    effects.breathingEffect().setPeriod(period);
+    effects.showBreathing(r, g, b, now);
+    message = "Breathing effect preview displayed.";
+    return true;
+  }
+
+  if (type == "snake") {
+    unsigned long interval = obj["interval_ms"] | 90;
+    effects.snakeEffect().setInterval(interval);
+    effects.showSnake(r, g, b, now);
+    message = "Snake effect preview displayed.";
+    return true;
+  }
+
+  message = "Unsupported effect type.";
+  return false;
+}
+
+static bool handleSimulateCard(JsonVariantConst payload, String &message) {
+  if (!payload.is<JsonObjectConst>()) {
+    message = "Payload must be a JSON object.";
+    return false;
+  }
+
+  JsonObjectConst obj = payload.as<JsonObjectConst>();
+  const char *uidValue = obj["uid"] | nullptr;
+  if (uidValue == nullptr) {
+    message = "Missing 'uid' field.";
+    return false;
+  }
+
+  bool bypassDebounce = obj["bypass_debounce"] | false;
+  bool sendToBackend = obj["send_to_backend"] | true;
+
+  unsigned long now = millis();
+  CardProcessResult result =
+      processCardUid(String(uidValue), now, bypassDebounce, sendToBackend);
+
+  switch (result) {
+    case CardProcessResult::DuplicateIgnored:
+      message = "Duplicate UID ignored due to debounce.";
+      return false;
+    case CardProcessResult::BackendSkipped:
+      message = "Simulated card processed without backend call.";
+      return true;
+    case CardProcessResult::BackendSuccess:
+      message = "Backend request completed successfully.";
+      return true;
+    case CardProcessResult::BackendFailure:
+      message = "Backend request failed.";
+      return false;
+    case CardProcessResult::WifiDisconnected:
+      message = "Wi-Fi is disconnected; backend request skipped.";
+      return false;
+  }
+
+  message = "Unknown result.";
+  return false;
+}
+#endif
+
 static void initializeMdns() {
   if (mdnsStarted) {
     return;
@@ -155,11 +376,27 @@ void setup() {
   rfid.begin();
   Serial.println("NFC reader initialized");
 
+#if ENABLE_DEBUG_ACTIONS
+  debugServer.registerAction({"set_visual_state",
+                              "Set or override the current LED state.",
+                              handleSetVisualState});
+  debugServer.registerAction(
+      {"preview_effect", "Preview an LED effect with custom colours.",
+       handlePreviewEffect});
+  debugServer.registerAction({"simulate_card",
+                              "Simulate an NFC card scan with an arbitrary UID.",
+                              handleSimulateCard});
+  debugServer.begin();
+  if (wifi.isConnected()) {
+    debugServer.start();
+  }
+#endif
+
   Serial.println("=================================");
   Serial.println("Setup complete. Ready to scan cards.");
   Serial.println("Place an NFC card near the reader...");
   Serial.println("=================================\n");
-  
+
 }
 
 void loop() {
@@ -172,11 +409,21 @@ void loop() {
   if (isConnected && !wifiPreviouslyConnected) {
     initializeMdns();
     setBaseVisualState(VisualState::WifiConnected, now);
+#if ENABLE_DEBUG_ACTIONS
+    debugServer.start();
+#endif
   } else if (!isConnected && wifiPreviouslyConnected) {
     mdnsStarted = false;
     setBaseVisualState(VisualState::WifiConnecting, now);
+#if ENABLE_DEBUG_ACTIONS
+    debugServer.stop();
+#endif
   }
   wifiPreviouslyConnected = isConnected;
+
+#if ENABLE_DEBUG_ACTIONS
+  debugServer.loop();
+#endif
 
   // Print periodic status (every 10 seconds)
   if (now - lastDebugTime > 10000) {
@@ -188,41 +435,10 @@ void loop() {
   // Try to read a card
   String uid;
   bool cardRead = rfid.readCard(uid);
-  
+
   if (cardRead) {
-    Serial.println("*** CARD DETECTED ***");
-    Serial.printf("Raw UID: %s (length: %d)\n", uid.c_str(), uid.length());
-
     now = millis();
-    setVisualState(VisualState::CardDetected, now);
-
-    bool isDuplicate = uid == lastUid && (now - lastReadTime) < CARD_DEBOUNCE_MS;
-    if (isDuplicate) {
-      Serial.printf("[DEBOUNCE] Ignoring repeated read (last read %lu ms ago)\n",
-                    now - lastReadTime);
-    } else {
-      lastUid = uid;
-      lastReadTime = now;
-      Serial.printf("Card accepted: UID=%s\n", uid.c_str());
-
-      if (!wifi.isConnected()) {
-        Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
-        setVisualState(VisualState::BackendError, millis());
-        now = millis();
-      } else {
-        Serial.println("Sending request to backend...");
-        bool ok = backend.postPlay(uid);
-        now = millis();
-        if (ok) {
-          Serial.println("[SUCCESS] Backend request successful");
-          setVisualState(VisualState::BackendSuccess, now);
-        } else {
-          Serial.println("[ERROR] Backend request failed");
-          setVisualState(VisualState::BackendError, now);
-        }
-      }
-      Serial.println("*** END CARD PROCESSING ***\n");
-    }
+    processCardUid(uid, now, false, true);
   }
 
   now = millis();

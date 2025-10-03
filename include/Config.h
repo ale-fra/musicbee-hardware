@@ -28,6 +28,12 @@ static constexpr const char *const WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
 static constexpr const char *const BACKEND_HOST  = SECRET_BACKEND_HOST;
 static constexpr uint16_t         BACKEND_PORT  = SECRET_BACKEND_PORT;
 
+// Optional debug HTTP server used to trigger firmware actions without
+// physical hardware. Enable it during development to expose
+// troubleshooting endpoints on DEBUG_SERVER_PORT.
+static constexpr bool     ENABLE_DEBUG_ACTIONS = false;
+static constexpr uint16_t DEBUG_SERVER_PORT    = 8081;
+
 // RFID/NFC reader selection. Choose which hardware backend should be
 // compiled into the firmware. Add new enum values if additional reader
 // types are supported in the future. The PlatformIO environment
