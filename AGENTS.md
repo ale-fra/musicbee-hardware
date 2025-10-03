@@ -1,12 +1,46 @@
-# AGENTS.md spec
-- Containers often contain AGENTS.md files. These files can appear anywhere in the container's filesystem. Typical locations include `/`, `~`, and in various places inside of Git repos.
-- These files are a way for humans to give you (the agent) instructions or tips for working within the container.
-- Some examples might be: coding conventions, info about how code is organized, or instructions for how to run or test code.
-- AGENTS.md files may provide instructions about PR messages (messages attached to a GitHub Pull Request produced by the agent, describing the PR). These instructions should be respected.
-- Instructions in AGENTS.md files:
-    - The scope of an AGENTS.md file is the entire directory tree rooted at the folder that contains it.
-    - For every file you touch in the final patch, you must obey instructions in any AGENTS.md file whose scope includes that file.
-    - Instructions about code style, structure, naming, etc. apply only to code within the AGENTS.md file's scope, unless the file states otherwise.
-    - More-deeply-nested AGENTS.md files take precedence in the case of conflicting instructions.
-    - Direct system/developer/user instructions (as part of a prompt) take precedence over AGENTS.md instructions.
-- AGENTS.md files need not live only in Git repos. For example, you may find one in your home directory.
+# MusicBee Hardware – Agent Guide
+
+## Project scope
+- Firmware targets the ESP32-S3 and bridges NFC card reads to the MusicBee backend so kids can trigger playback safely via NFC tags.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=9 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L1-L9"}​
+- Two NFC reader families are supported: MFRC522 (SPI) and PN532 (I²C by default, SPI optional). LED feedback conveys Wi-Fi, card, and backend status.​:codex-file-citation[codex-file-citation]{line_range_start=7 line_range_end=41 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L7-L41"}​
+
+## Repository layout
+- `src/` – implementation files (`main.cpp`, drivers, and effect logic). The entry point orchestrates Wi-Fi, RFID, backend calls, and LED visuals.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=231 path=src/main.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/main.cpp#L1-L231"}​
+- `include/` – public headers and configuration (`Config.h`, `RfidReader.h`, `WifiManager.h`, effects). Configuration is compile-time and backed by secrets pulled from `secrets.h`.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=88 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L1-L88"}​​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=39 path=include/RfidReader.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/RfidReader.h#L1-L39"}​
+- `lib/` – optional PlatformIO libraries; empty template by default.
+- `test/` – placeholder for PlatformIO unit tests.
+
+## Build & flash workflow
+1. Copy `include/secrets.example.h` to `include/secrets.h` and fill Wi-Fi credentials plus backend host/port values. Keep `secrets.h` out of version control.​:codex-file-citation[codex-file-citation]{line_range_start=43 line_range_end=46 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L43-L46"}​​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=29 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L1-L29"}​
+2. Pick the PlatformIO environment that matches your reader (`esp32-s3-devkitc-1-rc522` or `esp32-s3-devkitc-1-pn532`) and run `pio run` / `pio run --target upload`. The PN532 SPI variant needs `-DUSE_PN532_SPI`.​:codex-file-citation[codex-file-citation]{line_range_start=47 line_range_end=64 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L47-L64"}​​:codex-file-citation[codex-file-citation]{line_range_start=10 line_range_end=45 path=platformio.ini git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/platformio.ini#L10-L45"}​
+3. Monitor logs with `pio device monitor -b 115200` to verify connectivity and backend responses.​:codex-file-citation[codex-file-citation]{line_range_start=65 line_range_end=69 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L65-L69"}​
+4. For new hardware types, add an enum entry in `Config.h`, map pin constants, and extend the PlatformIO environment appropriately.​:codex-file-citation[codex-file-citation]{line_range_start=31 line_range_end=77 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L31-L77"}​​:codex-file-citation[codex-file-citation]{line_range_start=10 line_range_end=45 path=platformio.ini git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/platformio.ini#L10-L45"}​
+
+## Secrets & configuration
+- Define new compile-time toggles in `Config.h` as `static constexpr` constants with explanatory comments so deployments remain reproducible.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=88 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L1-L88"}​
+- Never commit real credentials; mirror new fields in `secrets.example.h`.
+
+## Coding conventions
+- Use `#pragma once` in headers and prefer `static constexpr` over macros for constants.​:codex-file-citation[codex-file-citation]{line_range_start=11 line_range_end=30 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L11-L30"}​
+- Indent with two spaces, follow early-return guard style, and keep functions small and single-purpose as demonstrated across `src/`.​:codex-file-citation[codex-file-citation]{line_range_start=14 line_range_end=88 path=src/BackendClient.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/BackendClient.cpp#L14-L88"}​​:codex-file-citation[codex-file-citation]{line_range_start=10 line_range_end=48 path=src/WifiManager.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/WifiManager.cpp#L10-L48"}​
+- Log with tagged `Serial.printf`/`Serial.println` messages (e.g., `[Backend]`, `[RFID]`) to aid serial debugging; mimic existing tone and troubleshooting hints.​:codex-file-citation[codex-file-citation]{line_range_start=27 line_range_end=84 path=src/BackendClient.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/BackendClient.cpp#L27-L84"}​​:codex-file-citation[codex-file-citation]{line_range_start=55 line_range_end=221 path=src/RfidReader.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/RfidReader.cpp#L55-L221"}​
+- Use `enum class` for state machines and keep timing in `unsigned long` milliseconds via `millis()` utilities.​:codex-file-citation[codex-file-citation]{line_range_start=21 line_range_end=230 path=src/main.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/main.cpp#L21-L230"}​
+- Favor RAII helpers (`std::unique_ptr`) for hardware backends and isolate hardware-specific code inside internal classes or namespaces.​:codex-file-citation[codex-file-citation]{line_range_start=30 line_range_end=285 path=src/RfidReader.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/RfidReader.cpp#L30-L285"}​
+- Document each module with a header comment summarizing its purpose.
+
+## Firmware architecture notes
+- `main.cpp` owns the event loop. Visual feedback is centralized via `EffectManager`; transient states (card detected, backend result) expire after 2.5 seconds before reverting to the base Wi-Fi state.​:codex-file-citation[codex-file-citation]{line_range_start=21 line_range_end=231 path=src/main.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/main.cpp#L21-L231"}​
+- `WifiManager` wraps connection setup, retries every five seconds, and exposes `isConnected()` for guards before network calls.​:codex-file-citation[codex-file-citation]{line_range_start=10 line_range_end=48 path=src/WifiManager.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/WifiManager.cpp#L10-L48"}​
+- `BackendClient` resolves `.local` hosts with mDNS and posts JSON stubs to `/api/v1/cards/{uid}/play`, treating any non-2xx response as failure.​:codex-file-citation[codex-file-citation]{line_range_start=24 line_range_end=87 path=src/BackendClient.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/BackendClient.cpp#L24-L87"}​
+- `RfidReader` selects the correct backend (RC522 or PN532) at runtime based on `Config.h`. Add new readers by implementing `IRfidBackend` and wiring it in the switch block.​:codex-file-citation[codex-file-citation]{line_range_start=15 line_range_end=39 path=include/RfidReader.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/RfidReader.h#L15-L39"}​​:codex-file-citation[codex-file-citation]{line_range_start=34 line_range_end=285 path=src/RfidReader.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/RfidReader.cpp#L34-L285"}​
+- `EffectManager` exposes `SolidColor`, `Snake`, and `Breathing` effects. When creating new animations, subclass `Effect`, override `begin/update`, and let `EffectManager` handle strip wiring.​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=161 path=src/Effects.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/Effects.cpp#L1-L161"}​​:codex-file-citation[codex-file-citation]{line_range_start=1 line_range_end=63 path=src/EffectManager.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/EffectManager.cpp#L1-L63"}​
+
+## Testing & debugging expectations
+- Build and (when hardware is available) upload via `pio run`/`pio run --target upload`. Consider adding PlatformIO unit tests in `test/` for logic that can run on the host.
+- Watch for Wi-Fi reconnection logs and `[DEBOUNCE]` messages to ensure debounce settings remain sane when adjusting `CARD_DEBOUNCE_MS`.​:codex-file-citation[codex-file-citation]{line_range_start=181 line_range_end=230 path=src/main.cpp git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/src/main.cpp#L181-L230"}​​:codex-file-citation[codex-file-citation]{line_range_start=74 line_range_end=85 path=include/Config.h git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/include/Config.h#L74-L85"}​
+- Validate new backend integrations with serial logging; keep troubleshooting hints user-friendly like the current implementation.
+
+## Documentation & PR checklist
+- Update `README.md` if you change wiring defaults, add hardware, or alter user-facing behavior.​:codex-file-citation[codex-file-citation]{line_range_start=17 line_range_end=83 path=README.md git_url="https://github.com/ale-fra/musicbee-hardware/blob/main/README.md#L17-L83"}​
+- Keep `include/README` in sync when adding configuration knobs so downstream users know where to look.
+- Ensure secrets placeholders stay accurate, bump library dependencies in `platformio.ini` when required, and include test/flash commands in PR descriptions.
