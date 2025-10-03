@@ -35,6 +35,7 @@ class DebugActionServer {
   void handleInvokeAction();
   void sendJson(int statusCode, const JsonDocument &doc);
 
+  const uint16_t port_;
   WebServer server_;
   std::vector<DebugAction> actions_;
   bool routesRegistered_ = false;

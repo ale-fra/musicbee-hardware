@@ -19,7 +19,8 @@ constexpr size_t kListPayloadCapacity = 768;
 constexpr size_t kActionPayloadCapacity = 512;
 }
 
-DebugActionServer::DebugActionServer(uint16_t port) : server_(port) {}
+DebugActionServer::DebugActionServer(uint16_t port)
+    : port_(port), server_(port) {}
 
 void DebugActionServer::registerAction(const DebugAction &action) {
   actions_.push_back(action);
@@ -45,7 +46,7 @@ void DebugActionServer::start() {
 
   server_.begin();
   running_ = true;
-  Serial.printf("[DebugServer] Started on port %u\n", server_.serverPort());
+  Serial.printf("[DebugServer] Started on port %u\n", port_);
 }
 
 void DebugActionServer::stop() {
@@ -73,7 +74,7 @@ void DebugActionServer::setupRoutes() {
              [this]() { handleInvokeAction(); });
 
   server_.onNotFound([this]() {
-    StaticJsonDocument<128> doc;
+    DynamicJsonDocument doc(128);
     doc["ok"] = false;
     doc["message"] = "Endpoint not found";
     sendJson(404, doc);
@@ -81,7 +82,7 @@ void DebugActionServer::setupRoutes() {
 }
 
 void DebugActionServer::handleListActions() {
-  StaticJsonDocument<kListPayloadCapacity> doc;
+  DynamicJsonDocument doc(kListPayloadCapacity);
   JsonArray actions = doc.createNestedArray("actions");
 
   for (const DebugAction &action : actions_) {
@@ -96,7 +97,7 @@ void DebugActionServer::handleListActions() {
 
 void DebugActionServer::handleInvokeAction() {
   if (server_.pathArg(0).isEmpty()) {
-    StaticJsonDocument<128> doc;
+    DynamicJsonDocument doc(128);
     doc["ok"] = false;
     doc["message"] = "Missing action name";
     sendJson(400, doc);
@@ -113,17 +114,17 @@ void DebugActionServer::handleInvokeAction() {
   }
 
   if (target == nullptr) {
-    StaticJsonDocument<128> doc;
+    DynamicJsonDocument doc(128);
     doc["ok"] = false;
     doc["message"] = "Unknown action";
     sendJson(404, doc);
     return;
   }
 
-  StaticJsonDocument<kActionPayloadCapacity> payloadDoc;
+  DynamicJsonDocument payloadDoc(kActionPayloadCapacity);
   DeserializationError err = deserializeJson(payloadDoc, server_.arg("plain"));
   if (err) {
-    StaticJsonDocument<160> doc;
+    DynamicJsonDocument doc(160);
     doc["ok"] = false;
     doc["message"] = String("Invalid JSON payload: ") + err.c_str();
     sendJson(400, doc);
@@ -134,7 +135,7 @@ void DebugActionServer::handleInvokeAction() {
   String message;
   bool ok = target->handler(payload, message);
 
-  StaticJsonDocument<256> response;
+  DynamicJsonDocument response(256);
   response["ok"] = ok;
   response["message"] = message;
 
