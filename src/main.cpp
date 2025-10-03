@@ -160,18 +160,14 @@ void setup() {
 
   // Connect to Wi-Fi
   Serial.println("Starting Wi-Fi connection...");
-  if (!wifi.begin()) {
-    Serial.println("Initial Wi-Fi connection failed. The device will continue retrying in the background.");
-    desiredWifiState = VisualState::WifiError;
+  bool connectedImmediately = wifi.begin();
+  if (connectedImmediately) {
+    Serial.println("Wi-Fi connected successfully!");
+    desiredWifiState = VisualState::WifiConnected;
+    initializeMdns();
   } else {
-    if (wifi.isConnected()) {
-      Serial.println("Wi-Fi connected successfully!");
-      desiredWifiState = VisualState::WifiConnected;
-      initializeMdns();
-    } else {
-      Serial.println("Wi-Fi connection attempt started. Waiting for link...");
-      desiredWifiState = VisualState::WifiConnecting;
-    }
+    Serial.println("Wi-Fi connection attempt started. Waiting for link...");
+    desiredWifiState = VisualState::WifiConnecting;
   }
 
   wifiPreviouslyConnected = wifi.isConnected();
@@ -195,12 +191,18 @@ void loop() {
   unsigned long now = millis();
 
   bool isConnected = wifi.isConnected();
+  if (wifi.hasConnectionFailed()) {
+    desiredWifiState = VisualState::WifiError;
+  } else if (isConnected) {
+    desiredWifiState = VisualState::WifiConnected;
+  } else {
+    desiredWifiState = VisualState::WifiConnecting;
+  }
+
   if (isConnected && !wifiPreviouslyConnected) {
     initializeMdns();
-    desiredWifiState = VisualState::WifiConnected;
   } else if (!isConnected && wifiPreviouslyConnected) {
     mdnsStarted = false;
-    desiredWifiState = VisualState::WifiConnecting;
   }
 
   if (!bootWindowElapsed) {
