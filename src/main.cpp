@@ -18,7 +18,22 @@ static RfidReader rfid;
 static BackendClient backend;
 static EffectManager effects(LED_DATA_PIN, LED_COUNT_DEFAULT, LED_BRIGHTNESS_DEFAULT);
 
+namespace {
+constexpr float kTailPrimaryFactor = 0.5f;
+constexpr float kTailSecondaryFactor = 0.2f;
+constexpr unsigned long kWifiCometIntervalMs = 40;
+constexpr unsigned long kCardSpinnerIntervalMs = 40;
+constexpr unsigned long kSuccessFlashMs = 80;
+constexpr unsigned long kSuccessSpinIntervalMs = 28;
+constexpr unsigned long kSuccessHoldMs = 350;
+constexpr unsigned long kErrorStrobeOnMs = 120;
+constexpr unsigned long kErrorStrobeOffMs = 80;
+constexpr unsigned long kErrorCometIntervalMs = 45;
+constexpr unsigned long kErrorFadeDurationMs = 300;
+}
+
 enum class VisualState {
+  Idle,
   WifiConnecting,
   WifiConnected,
   WifiError,
@@ -45,19 +60,40 @@ static bool isTransientState(VisualState state) {
 
 static void applyVisualState(VisualState state, unsigned long now) {
   switch (state) {
-    case VisualState::WifiConnecting:
-      effects.breathingEffect().setPeriod(1500);
-      effects.showBreathing(0, 0, 255, now);
-      break;
-    case VisualState::WifiConnected:
+    case VisualState::Idle:
       effects.showSolidColor(0, 0, 0, now);
       break;
-    case VisualState::WifiError:
+    case VisualState::WifiConnecting:
+      effects.showComet(0, 0, 255,
+                        kTailPrimaryFactor, kTailSecondaryFactor,
+                        CometEffect::Direction::Clockwise,
+                        kWifiCometIntervalMs, now);
+      break;
+    case VisualState::CardScanning:
+      effects.showComet(255, 255, 255,
+                        kTailPrimaryFactor, kTailSecondaryFactor,
+                        CometEffect::Direction::Clockwise,
+                        kCardSpinnerIntervalMs, now);
+      break;
+    case VisualState::SuccessFlash:
+      effects.showSolidColor(255, 255, 255, now);
+      break;
+    case VisualState::SuccessSpin:
+      effects.showComet(0, 255, 0,
+                        kTailPrimaryFactor, kTailSecondaryFactor,
+                        CometEffect::Direction::Clockwise,
+                        kSuccessSpinIntervalMs, now);
+      break;
+    case VisualState::SuccessHold:
+      effects.showSolidColor(0, 255, 0, now);
+      break;
+    case VisualState::ErrorStrobeOn1:
+    case VisualState::ErrorStrobeOn2:
       effects.showSolidColor(255, 0, 0, now);
       break;
-    case VisualState::CardDetected:
-      effects.breathingEffect().setPeriod(600);
-      effects.showBreathing(255, 180, 60, now);
+    case VisualState::ErrorStrobeOff1:
+    case VisualState::ErrorStrobeOff2:
+      effects.showSolidColor(0, 0, 0, now);
       break;
     case VisualState::CardScanning:
       effects.breathingEffect().setPeriod(800);
@@ -67,16 +103,23 @@ static void applyVisualState(VisualState state, unsigned long now) {
       effects.snakeEffect().setInterval(90);
       effects.showSnake(0, 255, 0, now);
       break;
-    case VisualState::BackendError:
-      effects.breathingEffect().setPeriod(1200);
-      effects.showBreathing(255, 0, 0, now);
+    case VisualState::ErrorFade:
+      effects.showFade(255, 0, 0, 0, 0, 0, kErrorFadeDurationMs, now);
       break;
   }
 }
 
 static void setVisualState(VisualState state, unsigned long now) {
+  if (visualStateInitialized && currentVisualState == state) {
+    return;
+  }
+  if (currentVisualState != state) {
+    Serial.printf("[State] Transitioning from %s to %s at %lums\n",
+                  visualStateName(currentVisualState), visualStateName(state), now);
+  }
   currentVisualState = state;
   visualStateChangedAt = now;
+  visualStateInitialized = true;
   applyVisualState(state, now);
 }
 
@@ -152,17 +195,17 @@ void setup() {
   Serial.println("Initializing LED strip...");
   unsigned long now = millis();
   effects.begin(now);
-  setBaseVisualState(VisualState::WifiConnecting, now);
+  setVisualState(VisualState::WifiConnecting, now);
 
   // Connect to Wi-Fi
   Serial.println("Starting Wi-Fi connection...");
   if (!wifi.begin()) {
     Serial.println("Initial Wi-Fi connection failed. The device will continue retrying in the background.");
-    setBaseVisualState(VisualState::WifiError, millis());
+    updateWifiVisualState(false, millis());
   } else {
     Serial.println("Wi-Fi connected successfully!");
     unsigned long connectedNow = millis();
-    setBaseVisualState(VisualState::WifiConnected, connectedNow);
+    updateWifiVisualState(true, connectedNow);
     initializeMdns();
   }
 
@@ -189,11 +232,10 @@ void loop() {
   bool isConnected = wifi.isConnected();
   if (isConnected && !wifiPreviouslyConnected) {
     initializeMdns();
-    setBaseVisualState(VisualState::WifiConnected, now);
   } else if (!isConnected && wifiPreviouslyConnected) {
     mdnsStarted = false;
-    setBaseVisualState(VisualState::WifiConnecting, now);
   }
+  updateWifiVisualState(isConnected, now);
   wifiPreviouslyConnected = isConnected;
 
   // Print periodic status (every 10 seconds)
@@ -215,8 +257,6 @@ void loop() {
     Serial.printf("Raw UID: %s (length: %d)\n", uid.c_str(), uid.length());
 
     now = millis();
-    setVisualState(VisualState::CardDetected, now);
-
     bool isDuplicate = uid == lastUid && (now - lastReadTime) < CARD_DEBOUNCE_MS;
     if (isDuplicate) {
       Serial.printf("[DEBOUNCE] Ignoring repeated read (last read %lu ms ago)\n",
