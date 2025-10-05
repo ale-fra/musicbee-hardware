@@ -23,6 +23,7 @@ enum class VisualState {
   WifiConnected,
   WifiError,
   CardDetected,
+  CardScanning,
   BackendSuccess,
   BackendError
 };
@@ -31,6 +32,7 @@ static VisualState baseVisualState = VisualState::WifiConnecting;
 static VisualState currentVisualState = VisualState::WifiConnecting;
 static unsigned long visualStateChangedAt = 0;
 static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
+static bool pendingBackendRequest = false;
 
 static bool isTransientState(VisualState state) {
   return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
@@ -53,6 +55,10 @@ static void applyVisualState(VisualState state, unsigned long now) {
       effects.breathingEffect().setPeriod(600);
       effects.showBreathing(255, 180, 60, now);
       break;
+    case VisualState::CardScanning:
+      effects.breathingEffect().setPeriod(800);
+      effects.showBreathing(120, 120, 255, now);
+      break;
     case VisualState::BackendSuccess:
       effects.snakeEffect().setInterval(90);
       effects.showSnake(0, 255, 0, now);
@@ -72,7 +78,11 @@ static void setVisualState(VisualState state, unsigned long now) {
 
 static void setBaseVisualState(VisualState state, unsigned long now) {
   baseVisualState = state;
-  if (!isTransientState(currentVisualState) || currentVisualState == state) {
+  bool shouldApply = !isTransientState(currentVisualState) || currentVisualState == state;
+  if (currentVisualState == VisualState::CardScanning && pendingBackendRequest) {
+    shouldApply = false;
+  }
+  if (shouldApply) {
     setVisualState(state, now);
   }
 }
@@ -80,7 +90,11 @@ static void setBaseVisualState(VisualState state, unsigned long now) {
 static void refreshVisualState(unsigned long now) {
   if (isTransientState(currentVisualState) &&
       now - visualStateChangedAt >= TRANSIENT_EFFECT_DURATION_MS) {
-    setVisualState(baseVisualState, now);
+    if (pendingBackendRequest) {
+      setVisualState(VisualState::CardScanning, now);
+    } else {
+      setVisualState(baseVisualState, now);
+    }
   }
 }
 
@@ -209,19 +223,36 @@ void loop() {
         Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
         setVisualState(VisualState::BackendError, millis());
         now = millis();
+      } else if (pendingBackendRequest || backend.isBusy()) {
+        Serial.println("[Backend] Request already in progress. Ignoring new card.");
       } else {
-        Serial.println("Sending request to backend...");
-        bool ok = backend.postPlay(uid);
-        now = millis();
-        if (ok) {
-          Serial.println("[SUCCESS] Backend request successful");
-          setVisualState(VisualState::BackendSuccess, now);
+        Serial.println("Starting asynchronous request to backend...");
+        if (backend.beginPostPlayAsync(uid)) {
+          pendingBackendRequest = true;
+          now = millis();
+          setVisualState(VisualState::CardScanning, now);
         } else {
-          Serial.println("[ERROR] Backend request failed");
+          Serial.println("[ERROR] Failed to start backend request");
+          now = millis();
           setVisualState(VisualState::BackendError, now);
         }
       }
       Serial.println("*** END CARD PROCESSING ***\n");
+    }
+  }
+
+  if (pendingBackendRequest) {
+    bool success = false;
+    if (backend.pollResult(success)) {
+      pendingBackendRequest = false;
+      now = millis();
+      if (success) {
+        Serial.println("[SUCCESS] Backend request successful");
+        setVisualState(VisualState::BackendSuccess, now);
+      } else {
+        Serial.println("[ERROR] Backend request failed");
+        setVisualState(VisualState::BackendError, now);
+      }
     }
   }
 
