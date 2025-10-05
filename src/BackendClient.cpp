@@ -10,8 +10,55 @@
 #include <WiFiClient.h>
 #include <HttpClient.h>
 #include <ESPmDNS.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 bool BackendClient::postPlay(const String &cardUid) {
+  return performPostPlay(cardUid);
+}
+
+bool BackendClient::beginPostPlayAsync(const String &cardUid) {
+  if (requestInProgress) {
+    Serial.println("[Backend] Ignoring async request while another is running");
+    return false;
+  }
+
+  if (cardUid.length() == 0) {
+    Serial.println("[Backend] Empty UID provided to beginPostPlayAsync");
+    return false;
+  }
+
+  pendingUid = cardUid;
+  requestInProgress = true;
+  requestCompleted = false;
+  lastRequestSuccess = false;
+
+  BaseType_t created = xTaskCreate(BackendClient::requestTask, "BackendPostPlay", 4096, this, 1, nullptr);
+  if (created != pdPASS) {
+    Serial.println("[Backend] Failed to start backend task");
+    requestInProgress = false;
+    pendingUid = "";
+    return false;
+  }
+
+  return true;
+}
+
+bool BackendClient::isBusy() const {
+  return requestInProgress;
+}
+
+bool BackendClient::pollResult(bool &outSuccess) {
+  if (!requestCompleted) {
+    return false;
+  }
+
+  outSuccess = lastRequestSuccess;
+  requestCompleted = false;
+  return true;
+}
+
+bool BackendClient::performPostPlay(const String &cardUid) {
   // Guard: ensure we have a valid UID
   if (cardUid.length() == 0) {
     Serial.println("[Backend] Empty UID provided to postPlay");
@@ -85,4 +132,17 @@ bool BackendClient::postPlay(const String &cardUid) {
 
   // Success if 2xx
   return (responseCode >= 200 && responseCode < 300);
+}
+
+void BackendClient::requestTask(void *param) {
+  auto *client = static_cast<BackendClient *>(param);
+  String uid = client->pendingUid;
+  bool success = client->performPostPlay(uid);
+
+  client->pendingUid = "";
+  client->lastRequestSuccess = success;
+  client->requestCompleted = true;
+  client->requestInProgress = false;
+
+  vTaskDelete(nullptr);
 }
