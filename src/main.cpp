@@ -27,12 +27,7 @@ constexpr float kTailPrimaryFactor = 0.5f;
 constexpr float kTailSecondaryFactor = 0.2f;
 constexpr unsigned long kWifiCometIntervalMs = 40;
 constexpr unsigned long kCardSpinnerIntervalMs = 40;
-constexpr unsigned long kSuccessFlashMs = 80;
 constexpr unsigned long kSuccessSpinIntervalMs = 28;
-constexpr unsigned long kSuccessHoldMs = 350;
-constexpr unsigned long kErrorStrobeOnMs = 120;
-constexpr unsigned long kErrorStrobeOffMs = 80;
-constexpr unsigned long kErrorCometIntervalMs = 45;
 constexpr unsigned long kErrorFadeDurationMs = 300;
 }
 
@@ -52,6 +47,8 @@ static VisualState currentVisualState = VisualState::WifiConnecting;
 static unsigned long visualStateChangedAt = 0;
 static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
 static bool pendingBackendRequest = false;
+static bool visualStateInitialized = false;
+static bool wifiPreviouslyConnected = false;
 
 static bool isCardFlowState(VisualState state) {
   return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
@@ -60,6 +57,28 @@ static bool isCardFlowState(VisualState state) {
 
 static bool isTransientState(VisualState state) {
   return isCardFlowState(state);
+}
+
+static const char *visualStateName(VisualState state) {
+  switch (state) {
+    case VisualState::Idle:
+      return "Idle";
+    case VisualState::WifiConnecting:
+      return "WifiConnecting";
+    case VisualState::WifiConnected:
+      return "WifiConnected";
+    case VisualState::WifiError:
+      return "WifiError";
+    case VisualState::CardDetected:
+      return "CardDetected";
+    case VisualState::CardScanning:
+      return "CardScanning";
+    case VisualState::BackendSuccess:
+      return "BackendSuccess";
+    case VisualState::BackendError:
+      return "BackendError";
+  }
+  return "Unknown";
 }
 
 static void applyVisualState(VisualState state, unsigned long now) {
@@ -73,41 +92,27 @@ static void applyVisualState(VisualState state, unsigned long now) {
                         CometEffect::Direction::Clockwise,
                         kWifiCometIntervalMs, now);
       break;
+    case VisualState::WifiConnected:
+      effects.breathingEffect().setPeriod(1500);
+      effects.showBreathing(0, 128, 255, now);
+      break;
+    case VisualState::WifiError:
+      effects.showFade(255, 0, 0, 80, 0, 0, kErrorFadeDurationMs, now);
+      break;
+    case VisualState::CardDetected:
+      effects.showSolidColor(255, 255, 255, now);
+      break;
     case VisualState::CardScanning:
       effects.showComet(255, 255, 255,
                         kTailPrimaryFactor, kTailSecondaryFactor,
                         CometEffect::Direction::Clockwise,
                         kCardSpinnerIntervalMs, now);
       break;
-    case VisualState::SuccessFlash:
-      effects.showSolidColor(255, 255, 255, now);
-      break;
-    case VisualState::SuccessSpin:
-      effects.showComet(0, 255, 0,
-                        kTailPrimaryFactor, kTailSecondaryFactor,
-                        CometEffect::Direction::Clockwise,
-                        kSuccessSpinIntervalMs, now);
-      break;
-    case VisualState::SuccessHold:
-      effects.showSolidColor(0, 255, 0, now);
-      break;
-    case VisualState::ErrorStrobeOn1:
-    case VisualState::ErrorStrobeOn2:
-      effects.showSolidColor(255, 0, 0, now);
-      break;
-    case VisualState::ErrorStrobeOff1:
-    case VisualState::ErrorStrobeOff2:
-      effects.showSolidColor(0, 0, 0, now);
-      break;
-    case VisualState::CardScanning:
-      effects.breathingEffect().setPeriod(800);
-      effects.showBreathing(120, 120, 255, now);
-      break;
     case VisualState::BackendSuccess:
-      effects.snakeEffect().setInterval(90);
+      effects.snakeEffect().setInterval(kSuccessSpinIntervalMs);
       effects.showSnake(0, 255, 0, now);
       break;
-    case VisualState::ErrorFade:
+    case VisualState::BackendError:
       effects.showFade(255, 0, 0, 0, 0, 0, kErrorFadeDurationMs, now);
       break;
   }
@@ -149,12 +154,21 @@ static void refreshVisualState(unsigned long now) {
   }
 }
 
+static void updateWifiVisualState(bool isConnected, unsigned long now) {
+  VisualState target = VisualState::WifiConnecting;
+  if (isConnected) {
+    target = VisualState::WifiConnected;
+  } else if (visualStateInitialized && wifiPreviouslyConnected) {
+    target = VisualState::WifiError;
+  }
+  setBaseVisualState(target, now);
+}
+
 // Variables to handle debouncing of repeated card reads
 static String lastUid = "";
 static unsigned long lastReadTime = 0;
 static unsigned long lastDebugTime = 0;
 static bool mdnsStarted = false;
-static bool wifiPreviouslyConnected = false;
 
 #if ENABLE_DEBUG_ACTIONS
 static DebugActionServer debugServer(DEBUG_SERVER_PORT);
@@ -496,8 +510,6 @@ void loop() {
   if (cardRead) {
     Serial.println("*** CARD DETECTED ***");
     Serial.printf("Raw UID: %s (length: %d)\n", uid.c_str(), uid.length());
-
-  if (cardRead) {
     now = millis();
     bool isDuplicate = uid == lastUid && (now - lastReadTime) < CARD_DEBOUNCE_MS;
     if (isDuplicate) {
@@ -507,6 +519,7 @@ void loop() {
       lastUid = uid;
       lastReadTime = now;
       Serial.printf("Card accepted: UID=%s\n", uid.c_str());
+      setVisualState(VisualState::CardDetected, now);
 
       if (!wifi.isConnected()) {
         Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
