@@ -50,6 +50,7 @@ enum class VisualState {
 static VisualState baseVisualState = VisualState::WifiConnecting;
 static VisualState currentVisualState = VisualState::WifiConnecting;
 static unsigned long visualStateChangedAt = 0;
+static bool visualStateInitialized = false;
 
 static const char *visualStateName(VisualState state) {
   switch (state) {
@@ -161,12 +162,16 @@ static void applyVisualState(VisualState state, unsigned long now) {
 }
 
 static void setVisualState(VisualState state, unsigned long now) {
+  if (visualStateInitialized && currentVisualState == state) {
+    return;
+  }
   if (currentVisualState != state) {
     Serial.printf("[State] Transitioning from %s to %s at %lums\n",
                   visualStateName(currentVisualState), visualStateName(state), now);
   }
   currentVisualState = state;
   visualStateChangedAt = now;
+  visualStateInitialized = true;
   applyVisualState(state, now);
 }
 
