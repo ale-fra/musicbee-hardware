@@ -22,11 +22,27 @@ static RfidReader rfid;
 static BackendClient backend;
 static EffectManager effects(LED_DATA_PIN, LED_COUNT_DEFAULT, LED_BRIGHTNESS_DEFAULT);
 
+namespace {
+constexpr float kTailPrimaryFactor = 0.5f;
+constexpr float kTailSecondaryFactor = 0.2f;
+constexpr unsigned long kWifiCometIntervalMs = 40;
+constexpr unsigned long kCardSpinnerIntervalMs = 40;
+constexpr unsigned long kSuccessFlashMs = 80;
+constexpr unsigned long kSuccessSpinIntervalMs = 28;
+constexpr unsigned long kSuccessHoldMs = 350;
+constexpr unsigned long kErrorStrobeOnMs = 120;
+constexpr unsigned long kErrorStrobeOffMs = 80;
+constexpr unsigned long kErrorCometIntervalMs = 45;
+constexpr unsigned long kErrorFadeDurationMs = 300;
+}
+
 enum class VisualState {
+  Idle,
   WifiConnecting,
   WifiConnected,
   WifiError,
   CardDetected,
+  CardScanning,
   BackendSuccess,
   BackendError
 };
@@ -35,48 +51,89 @@ static VisualState baseVisualState = VisualState::WifiConnecting;
 static VisualState currentVisualState = VisualState::WifiConnecting;
 static unsigned long visualStateChangedAt = 0;
 static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
+static bool pendingBackendRequest = false;
 
-static bool isTransientState(VisualState state) {
+static bool isCardFlowState(VisualState state) {
   return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
          state == VisualState::BackendError;
 }
 
+static bool isTransientState(VisualState state) {
+  return isCardFlowState(state);
+}
+
 static void applyVisualState(VisualState state, unsigned long now) {
   switch (state) {
-    case VisualState::WifiConnecting:
-      effects.breathingEffect().setPeriod(1500);
-      effects.showBreathing(0, 0, 255, now);
-      break;
-    case VisualState::WifiConnected:
+    case VisualState::Idle:
       effects.showSolidColor(0, 0, 0, now);
       break;
-    case VisualState::WifiError:
+    case VisualState::WifiConnecting:
+      effects.showComet(0, 0, 255,
+                        kTailPrimaryFactor, kTailSecondaryFactor,
+                        CometEffect::Direction::Clockwise,
+                        kWifiCometIntervalMs, now);
+      break;
+    case VisualState::CardScanning:
+      effects.showComet(255, 255, 255,
+                        kTailPrimaryFactor, kTailSecondaryFactor,
+                        CometEffect::Direction::Clockwise,
+                        kCardSpinnerIntervalMs, now);
+      break;
+    case VisualState::SuccessFlash:
+      effects.showSolidColor(255, 255, 255, now);
+      break;
+    case VisualState::SuccessSpin:
+      effects.showComet(0, 255, 0,
+                        kTailPrimaryFactor, kTailSecondaryFactor,
+                        CometEffect::Direction::Clockwise,
+                        kSuccessSpinIntervalMs, now);
+      break;
+    case VisualState::SuccessHold:
+      effects.showSolidColor(0, 255, 0, now);
+      break;
+    case VisualState::ErrorStrobeOn1:
+    case VisualState::ErrorStrobeOn2:
       effects.showSolidColor(255, 0, 0, now);
       break;
-    case VisualState::CardDetected:
-      effects.breathingEffect().setPeriod(600);
-      effects.showBreathing(255, 180, 60, now);
+    case VisualState::ErrorStrobeOff1:
+    case VisualState::ErrorStrobeOff2:
+      effects.showSolidColor(0, 0, 0, now);
+      break;
+    case VisualState::CardScanning:
+      effects.breathingEffect().setPeriod(800);
+      effects.showBreathing(120, 120, 255, now);
       break;
     case VisualState::BackendSuccess:
       effects.snakeEffect().setInterval(90);
       effects.showSnake(0, 255, 0, now);
       break;
-    case VisualState::BackendError:
-      effects.breathingEffect().setPeriod(1200);
-      effects.showBreathing(255, 0, 0, now);
+    case VisualState::ErrorFade:
+      effects.showFade(255, 0, 0, 0, 0, 0, kErrorFadeDurationMs, now);
       break;
   }
 }
 
 static void setVisualState(VisualState state, unsigned long now) {
+  if (visualStateInitialized && currentVisualState == state) {
+    return;
+  }
+  if (currentVisualState != state) {
+    Serial.printf("[State] Transitioning from %s to %s at %lums\n",
+                  visualStateName(currentVisualState), visualStateName(state), now);
+  }
   currentVisualState = state;
   visualStateChangedAt = now;
+  visualStateInitialized = true;
   applyVisualState(state, now);
 }
 
 static void setBaseVisualState(VisualState state, unsigned long now) {
   baseVisualState = state;
-  if (!isTransientState(currentVisualState) || currentVisualState == state) {
+  bool shouldApply = !isTransientState(currentVisualState) || currentVisualState == state;
+  if (currentVisualState == VisualState::CardScanning && pendingBackendRequest) {
+    shouldApply = false;
+  }
+  if (shouldApply) {
     setVisualState(state, now);
   }
 }
@@ -84,7 +141,11 @@ static void setBaseVisualState(VisualState state, unsigned long now) {
 static void refreshVisualState(unsigned long now) {
   if (isTransientState(currentVisualState) &&
       now - visualStateChangedAt >= TRANSIENT_EFFECT_DURATION_MS) {
-    setVisualState(baseVisualState, now);
+    if (pendingBackendRequest) {
+      setVisualState(VisualState::CardScanning, now);
+    } else {
+      setVisualState(baseVisualState, now);
+    }
   }
 }
 
@@ -355,17 +416,17 @@ void setup() {
   Serial.println("Initializing LED strip...");
   unsigned long now = millis();
   effects.begin(now);
-  setBaseVisualState(VisualState::WifiConnecting, now);
+  setVisualState(VisualState::WifiConnecting, now);
 
   // Connect to Wi-Fi
   Serial.println("Starting Wi-Fi connection...");
   if (!wifi.begin()) {
     Serial.println("Initial Wi-Fi connection failed. The device will continue retrying in the background.");
-    setBaseVisualState(VisualState::WifiError, millis());
+    updateWifiVisualState(false, millis());
   } else {
     Serial.println("Wi-Fi connected successfully!");
     unsigned long connectedNow = millis();
-    setBaseVisualState(VisualState::WifiConnected, connectedNow);
+    updateWifiVisualState(true, connectedNow);
     initializeMdns();
   }
 
@@ -408,17 +469,10 @@ void loop() {
   bool isConnected = wifi.isConnected();
   if (isConnected && !wifiPreviouslyConnected) {
     initializeMdns();
-    setBaseVisualState(VisualState::WifiConnected, now);
-#if ENABLE_DEBUG_ACTIONS
-    debugServer.start();
-#endif
   } else if (!isConnected && wifiPreviouslyConnected) {
     mdnsStarted = false;
-    setBaseVisualState(VisualState::WifiConnecting, now);
-#if ENABLE_DEBUG_ACTIONS
-    debugServer.stop();
-#endif
   }
+  updateWifiVisualState(isConnected, now);
   wifiPreviouslyConnected = isConnected;
 
 #if ENABLE_DEBUG_ACTIONS
@@ -434,11 +488,61 @@ void loop() {
 
   // Try to read a card
   String uid;
-  bool cardRead = rfid.readCard(uid);
+  bool cardRead = false;
+  if (!isCardFlowState(currentVisualState)) {
+    cardRead = rfid.readCard(uid);
+  }
+  
+  if (cardRead) {
+    Serial.println("*** CARD DETECTED ***");
+    Serial.printf("Raw UID: %s (length: %d)\n", uid.c_str(), uid.length());
 
   if (cardRead) {
     now = millis();
-    processCardUid(uid, now, false, true);
+    bool isDuplicate = uid == lastUid && (now - lastReadTime) < CARD_DEBOUNCE_MS;
+    if (isDuplicate) {
+      Serial.printf("[DEBOUNCE] Ignoring repeated read (last read %lu ms ago)\n",
+                    now - lastReadTime);
+    } else {
+      lastUid = uid;
+      lastReadTime = now;
+      Serial.printf("Card accepted: UID=%s\n", uid.c_str());
+
+      if (!wifi.isConnected()) {
+        Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
+        setVisualState(VisualState::BackendError, millis());
+        now = millis();
+      } else if (pendingBackendRequest || backend.isBusy()) {
+        Serial.println("[Backend] Request already in progress. Ignoring new card.");
+      } else {
+        Serial.println("Starting asynchronous request to backend...");
+        if (backend.beginPostPlayAsync(uid)) {
+          pendingBackendRequest = true;
+          now = millis();
+          setVisualState(VisualState::CardScanning, now);
+        } else {
+          Serial.println("[ERROR] Failed to start backend request");
+          now = millis();
+          setVisualState(VisualState::BackendError, now);
+        }
+      }
+      Serial.println("*** END CARD PROCESSING ***\n");
+    }
+  }
+
+  if (pendingBackendRequest) {
+    bool success = false;
+    if (backend.pollResult(success)) {
+      pendingBackendRequest = false;
+      now = millis();
+      if (success) {
+        Serial.println("[SUCCESS] Backend request successful");
+        setVisualState(VisualState::BackendSuccess, now);
+      } else {
+        Serial.println("[ERROR] Backend request failed");
+        setVisualState(VisualState::BackendError, now);
+      }
+    }
   }
 
   now = millis();

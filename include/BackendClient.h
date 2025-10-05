@@ -21,4 +21,34 @@ public:
    * returns false and logs the error via Serial.
    */
   bool postPlay(const String &cardUid);
+
+  /**
+   * Start the backend request on a background FreeRTOS task. Returns
+   * true if the task was created successfully. The caller can poll
+   * {@link pollResult} to obtain the outcome once the request
+   * completes.
+   */
+  bool beginPostPlayAsync(const String &cardUid);
+
+  /**
+   * Returns true while a background request is still running.
+   */
+  bool isBusy() const;
+
+  /**
+   * Poll for the result of the most recent asynchronous request. When
+   * the request completes, this method stores the success flag in
+   * `outSuccess` and returns true. Otherwise it returns false to
+   * indicate that the operation is still in progress.
+   */
+  bool pollResult(bool &outSuccess);
+
+private:
+  bool performPostPlay(const String &cardUid);
+  static void requestTask(void *param);
+
+  volatile bool requestInProgress = false;
+  volatile bool requestCompleted = false;
+  volatile bool lastRequestSuccess = false;
+  String pendingUid;
 };
