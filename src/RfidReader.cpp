@@ -33,6 +33,10 @@
 
 namespace {
 
+#if defined(USE_PN532)
+static constexpr uint16_t PN532_POLL_TIMEOUT_MS = 150;
+#endif
+
 String bytesToHexString(const uint8_t *buffer, size_t length) {
   String uidHex;
   uidHex.reserve(length * 2);
@@ -204,7 +208,8 @@ bool begin() override {
     std::array<uint8_t, 10> uid{};
     uint8_t uidLength = 0;
 
-    bool success = _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.data(), &uidLength, 1000);
+    bool success =
+        _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.data(), &uidLength, PN532_POLL_TIMEOUT_MS);
     if (!success) {
       return false;
     }

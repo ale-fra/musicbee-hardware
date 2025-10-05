@@ -32,9 +32,13 @@ static VisualState currentVisualState = VisualState::WifiConnecting;
 static unsigned long visualStateChangedAt = 0;
 static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
 
-static bool isTransientState(VisualState state) {
+static bool isCardFlowState(VisualState state) {
   return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
          state == VisualState::BackendError;
+}
+
+static bool isTransientState(VisualState state) {
+  return isCardFlowState(state);
 }
 
 static void applyVisualState(VisualState state, unsigned long now) {
@@ -187,7 +191,10 @@ void loop() {
 
   // Try to read a card
   String uid;
-  bool cardRead = rfid.readCard(uid);
+  bool cardRead = false;
+  if (!isCardFlowState(currentVisualState)) {
+    cardRead = rfid.readCard(uid);
+  }
   
   if (cardRead) {
     Serial.println("*** CARD DETECTED ***");
