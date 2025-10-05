@@ -34,7 +34,8 @@
 namespace {
 
 #if defined(USE_PN532)
-static constexpr uint16_t PN532_POLL_TIMEOUT_MS = 150;
+static constexpr unsigned long PN532_ASYNC_RESTART_DELAY_MS = 5;
+static constexpr unsigned long PN532_ASYNC_RESPONSE_TIMEOUT_MS = 75;
 #endif
 
 String bytesToHexString(const uint8_t *buffer, size_t length) {
@@ -205,14 +206,43 @@ bool begin() override {
       return false;
     }
 
+    const unsigned long now = millis();
+
+    if (!_awaitingPassiveTarget) {
+      if (now - _lastDetectionCommandMs < PN532_ASYNC_RESTART_DELAY_MS) {
+        return false;
+      }
+
+      if (!_pn532.startPassiveTargetIDDetection(PN532_MIFARE_ISO14443A)) {
+        if (!_loggedStartFailure) {
+          Serial.println("[RFID] PN532 failed to start passive target detection");
+          _loggedStartFailure = true;
+        }
+        _lastDetectionCommandMs = now;
+        return false;
+      }
+
+      _awaitingPassiveTarget = true;
+      _lastDetectionCommandMs = now;
+      _loggedStartFailure = false;
+      return false;
+    }
+
     std::array<uint8_t, 10> uid{};
     uint8_t uidLength = 0;
 
     bool success =
-        _pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid.data(), &uidLength, PN532_POLL_TIMEOUT_MS);
+        _pn532.readDetectedPassiveTargetID(PN532_MIFARE_ISO14443A, uid.data(), &uidLength);
     if (!success) {
+      if (now - _lastDetectionCommandMs >= PN532_ASYNC_RESPONSE_TIMEOUT_MS) {
+        _awaitingPassiveTarget = false;
+        _lastDetectionCommandMs = now;
+      }
       return false;
     }
+
+    _awaitingPassiveTarget = false;
+    _lastDetectionCommandMs = now;
 
     if (uidLength > uid.size()) {
       Serial.printf("[RFID] PN532 UID length %d exceeds buffer size %u, aborting read\n",
@@ -240,6 +270,9 @@ private:
 #  endif
   Adafruit_PN532 _pn532;
   bool           _initialised = false;
+  bool           _awaitingPassiveTarget = false;
+  unsigned long  _lastDetectionCommandMs = 0;
+  bool           _loggedStartFailure = false;
 };
 #endif  // defined(USE_PN532)
 
