@@ -609,7 +609,7 @@ void setup() {
   // Initialise NFC reader
   Serial.println("Initializing NFC reader...");
   rfid.begin();
-  Serial.println("NFC reader initialized");
+  Serial.println("NFC reader initialization in progress");
 
 #if ENABLE_DEBUG_ACTIONS
   debugServer.registerAction({"set_visual_state",
@@ -639,6 +639,8 @@ void loop() {
   wifi.loop();
 
   unsigned long now = millis();
+
+  rfid.begin();
 
   bool isConnected = wifi.isConnected();
   if (isConnected && !wifiPreviouslyConnected) {
