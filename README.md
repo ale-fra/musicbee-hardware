@@ -6,6 +6,7 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 - Tap-to-play card detection with debounce, backend notification, and serial logging.
 - Supports MFRC522 (SPI) and PN532 (I²C or SPI) NFC modules selected at compile time.
 - Wi-Fi connection management with automatic retry and optional mDNS discovery for `.local` backends.
+- Automatic OTA firmware checks on boot and every 24 hours with manifest-driven updates.
 - RGB status LED with success, error, and connectivity feedback patterns.
 - Optional debug HTTP server for remote visual testing and simulated card scans.
 
@@ -72,7 +73,7 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 ## Runtime Behavior
 
 * On boot the firmware initializes the RGB LED, connects to Wi-Fi, announces the optional `nfc-jukebox` mDNS name, and runs a brief LED self-test.
-* During the main loop it keeps Wi-Fi alive, debounces repeated card reads, and sends accepted UIDs to the backend API at `/api/v1/cards/{uid}/play`.
+* During the main loop it keeps Wi-Fi alive, debounces repeated card reads, checks the OTA manifest every 24 hours, and sends accepted UIDs to the backend API at `/api/v1/cards/{uid}/play`.
 * LED feedback indicates state: green blink for success, red for errors, blue for connection attempts.
 * Backend responses and errors are printed over serial to help with troubleshooting.
 

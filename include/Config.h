@@ -90,5 +90,12 @@ static constexpr unsigned long CARD_DEBOUNCE_MS = 800;
 static constexpr unsigned long WIFI_RETRY_DELAY_MS = 2000;
 static constexpr uint8_t       MAX_WIFI_RETRIES     = 20;
 
+// Firmware versioning and OTA configuration.
+static constexpr const char *const CURRENT_FIRMWARE_VERSION = "1.0.0";
+static constexpr const char *const OTA_MANIFEST_PATH        = "/firmware/manifest.json";
+static constexpr unsigned long     OTA_CHECK_INTERVAL_MS    =
+    24UL * 60UL * 60UL * 1000UL;  // 24 hours
+static constexpr unsigned long OTA_HTTP_TIMEOUT_MS = 10000;
+
 
 // Legacy discrete RGB LED configuration removed; use the NeoPixel strip instead.
