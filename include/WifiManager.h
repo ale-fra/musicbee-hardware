@@ -33,9 +33,16 @@ public:
 
   /**
    * Returns true if the ESP is currently connected to Wi‑Fi.
-   */
+  */
   bool isConnected() const;
 
 private:
-  unsigned long _lastCheckMillis = 0;
+  enum class ConnectionState { Idle, Connecting, Cooldown };
+
+  void startConnectionAttempt(unsigned long now);
+
+  ConnectionState _state = ConnectionState::Idle;
+  unsigned long _stateChangedAt = 0;
+  uint8_t _attemptsThisCycle = 0;
+  bool _hasLoggedConnected = false;
 };

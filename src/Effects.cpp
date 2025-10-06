@@ -86,12 +86,30 @@ void SnakeEffect::begin(unsigned long now) {
 }
 
 void SnakeEffect::update(unsigned long now) {
-  if (now - _lastStep < _intervalMs) {
+  uint16_t count = ledCount();
+  if (count == 0) {
+    _lastStep = now;
+    draw();
     return;
   }
 
-  _lastStep = now;
-  _position = (_position + 1) % ledCount();
+  unsigned long interval = _intervalMs == 0 ? 1 : _intervalMs;
+  unsigned long elapsed = now - _lastStep;
+  if (elapsed < interval) {
+    return;
+  }
+
+  unsigned long steps = elapsed / interval;
+  if (steps == 0) {
+    steps = 1;
+  }
+
+  _lastStep += steps * interval;
+  uint16_t stepCount = static_cast<uint16_t>(steps % count);
+  if (stepCount == 0) {
+    stepCount = count;
+  }
+  _position = (_position + stepCount) % count;
   draw();
 }
 
@@ -152,19 +170,33 @@ void CometEffect::begin(unsigned long now) {
 }
 
 void CometEffect::update(unsigned long now) {
-  if (ledCount() == 0) {
+  uint16_t count = ledCount();
+  if (count == 0) {
+    _lastStep = now;
+    draw();
     return;
   }
 
-  if (now - _lastStep < _intervalMs) {
+  unsigned long interval = _intervalMs == 0 ? 1 : _intervalMs;
+  unsigned long elapsed = now - _lastStep;
+  if (elapsed < interval) {
     return;
   }
 
-  _lastStep = now;
+  unsigned long steps = elapsed / interval;
+  if (steps == 0) {
+    steps = 1;
+  }
+
+  _lastStep += steps * interval;
+  uint16_t stepCount = static_cast<uint16_t>(steps % count);
+  if (stepCount == 0) {
+    stepCount = count;
+  }
   if (_direction == Direction::Clockwise) {
-    _position = (_position + 1) % ledCount();
+    _position = (_position + stepCount) % count;
   } else {
-    _position = (_position + ledCount() - 1) % ledCount();
+    _position = (_position + count - stepCount) % count;
   }
   draw();
 }

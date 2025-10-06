@@ -6,6 +6,11 @@
 
 #include <Arduino.h>
 #include <ESPmDNS.h>
+#include <cstring>
+#include <cstdlib>
+#include <memory>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "Config.h"
 #include "WifiManager.h"
@@ -39,7 +44,10 @@ enum class VisualState {
   CardDetected,
   CardScanning,
   BackendSuccess,
-  BackendError
+  BackendError,
+  MdnsResolving,
+  MdnsSuccess,
+  MdnsError
 };
 
 static VisualState baseVisualState = VisualState::WifiConnecting;
@@ -49,6 +57,117 @@ static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
 static bool pendingBackendRequest = false;
 static bool visualStateInitialized = false;
 static bool wifiPreviouslyConnected = false;
+static constexpr UBaseType_t MDNS_QUERY_TASK_PRIORITY = 1;
+static constexpr uint16_t MDNS_QUERY_TASK_STACK_SIZE = 4096;
+
+enum class MdnsQueryState {
+  Idle,
+  NotRequired,
+  Pending,
+  Success,
+  Failure
+};
+
+struct MdnsQueryUpdate {
+  MdnsQueryState state = MdnsQueryState::Idle;
+  String hostname;
+  IPAddress resolvedIp;
+  unsigned long startedAt = 0;
+  unsigned long finishedAt = 0;
+};
+
+static volatile MdnsQueryState mdnsQueryState = MdnsQueryState::Idle;
+static MdnsQueryState lastReportedMdnsState = MdnsQueryState::Idle;
+static TaskHandle_t mdnsQueryTaskHandle = nullptr;
+static String mdnsQueryHostname;
+static IPAddress mdnsResolvedIp;
+static unsigned long mdnsQueryFinishedAt = 0;
+static unsigned long mdnsQueryStartedAt = 0;
+
+static bool scheduleMdnsQueryTask(const String &hostname, unsigned long now);
+static void mdnsQueryTask(void *param);
+static bool isCardFlowState(VisualState state);
+static void setVisualState(VisualState state, unsigned long now);
+
+static void resetMdnsQueryState() {
+  if (mdnsQueryTaskHandle == nullptr) {
+    mdnsQueryHostname = "";
+  }
+  mdnsResolvedIp = IPAddress();
+  mdnsQueryFinishedAt = 0;
+  mdnsQueryStartedAt = 0;
+  mdnsQueryState = MdnsQueryState::Idle;
+  lastReportedMdnsState = MdnsQueryState::Idle;
+}
+
+static void showMdnsVisualState(VisualState state, unsigned long now) {
+  if (!isCardFlowState(currentVisualState)) {
+    setVisualState(state, now);
+  }
+}
+
+static bool fetchMdnsQueryUpdate(MdnsQueryUpdate &out) {
+  MdnsQueryState state = mdnsQueryState;
+  if (state == lastReportedMdnsState) {
+    return false;
+  }
+
+  lastReportedMdnsState = state;
+  out.state = state;
+  out.hostname = mdnsQueryHostname;
+  out.resolvedIp = mdnsResolvedIp;
+  out.startedAt = mdnsQueryStartedAt;
+  out.finishedAt = mdnsQueryFinishedAt;
+  return true;
+}
+
+static void applyMdnsUpdateFeedback(const MdnsQueryUpdate &update, unsigned long now) {
+  switch (update.state) {
+    case MdnsQueryState::Pending:
+      Serial.printf("[mDNS] Resolving %s.local asynchronously...\n",
+                    update.hostname.c_str());
+      showMdnsVisualState(VisualState::MdnsResolving, now);
+      break;
+    case MdnsQueryState::Success:
+      Serial.printf("[mDNS] %s.local resolved to %s\n",
+                    update.hostname.c_str(), update.resolvedIp.toString().c_str());
+      if (update.startedAt != 0 && update.finishedAt >= update.startedAt) {
+        Serial.printf("[mDNS] Query completed in %lums\n",
+                      update.finishedAt - update.startedAt);
+      }
+      showMdnsVisualState(VisualState::MdnsSuccess, now);
+      break;
+    case MdnsQueryState::Failure:
+      Serial.printf("[WARNING] Could not resolve %s.local via mDNS\n",
+                    update.hostname.c_str());
+      Serial.println("Make sure your backend server is running and mDNS is enabled");
+      if (update.startedAt != 0 && update.finishedAt >= update.startedAt) {
+        Serial.printf("[mDNS] Query failed after %lums\n",
+                      update.finishedAt - update.startedAt);
+      }
+      showMdnsVisualState(VisualState::MdnsError, now);
+      break;
+    case MdnsQueryState::NotRequired:
+    case MdnsQueryState::Idle:
+      break;
+  }
+}
+
+static void mdnsQueryTask(void *param) {
+  std::unique_ptr<char, void (*)(void *)> hostnamePtr(static_cast<char *>(param), free);
+  const char *hostnameCStr = hostnamePtr.get();
+  IPAddress resolved = MDNS.queryHost(hostnameCStr ? hostnameCStr : "");
+
+  mdnsResolvedIp = resolved;
+  mdnsQueryFinishedAt = millis();
+  if (resolved == IPAddress(0, 0, 0, 0)) {
+    mdnsQueryState = MdnsQueryState::Failure;
+  } else {
+    mdnsQueryState = MdnsQueryState::Success;
+  }
+  mdnsQueryTaskHandle = nullptr;
+  vTaskDelete(nullptr);
+}
 
 static bool isCardFlowState(VisualState state) {
   return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
@@ -56,7 +175,8 @@ static bool isCardFlowState(VisualState state) {
 }
 
 static bool isTransientState(VisualState state) {
-  return isCardFlowState(state);
+  return isCardFlowState(state) || state == VisualState::MdnsSuccess ||
+         state == VisualState::MdnsError;
 }
 
 static const char *visualStateName(VisualState state) {
@@ -77,6 +197,12 @@ static const char *visualStateName(VisualState state) {
       return "BackendSuccess";
     case VisualState::BackendError:
       return "BackendError";
+    case VisualState::MdnsResolving:
+      return "MdnsResolving";
+    case VisualState::MdnsSuccess:
+      return "MdnsSuccess";
+    case VisualState::MdnsError:
+      return "MdnsError";
   }
   return "Unknown";
 }
@@ -114,6 +240,18 @@ static void applyVisualState(VisualState state, unsigned long now) {
       break;
     case VisualState::BackendError:
       effects.showFade(255, 0, 0, 0, 0, 0, kErrorFadeDurationMs, now);
+      break;
+    case VisualState::MdnsResolving:
+      effects.showComet(0, 128, 255,
+                        kTailPrimaryFactor, kTailSecondaryFactor,
+                        CometEffect::Direction::Clockwise,
+                        kWifiCometIntervalMs, now);
+      break;
+    case VisualState::MdnsSuccess:
+      effects.showSolidColor(0, 64, 0, now);
+      break;
+    case VisualState::MdnsError:
+      effects.showFade(255, 32, 32, 0, 0, 0, kErrorFadeDurationMs, now);
       break;
   }
 }
@@ -177,10 +315,14 @@ static DebugActionServer debugServer(DEBUG_SERVER_PORT);
 enum class CardProcessResult {
   DuplicateIgnored,
   BackendSkipped,
-  BackendSuccess,
+  BackendPending,
   BackendFailure,
-  WifiDisconnected
+  WifiDisconnected,
+  BackendBusy
 };
+
+static void handleBackendCompletion(bool success, unsigned long now);
+static CardProcessResult startBackendRequest(const String &uid);
 
 static CardProcessResult processCardUid(const String &uid, unsigned long now,
                                        bool bypassDebounce, bool sendToBackend) {
@@ -209,28 +351,50 @@ static CardProcessResult processCardUid(const String &uid, unsigned long now,
     return CardProcessResult::BackendSkipped;
   }
 
+  CardProcessResult backendResult = startBackendRequest(uid);
+  if (backendResult != CardProcessResult::BackendPending) {
+    Serial.println("*** END CARD PROCESSING ***\n");
+  }
+  return backendResult;
+}
+
+static CardProcessResult startBackendRequest(const String &uid) {
   if (!wifi.isConnected()) {
     Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
-    unsigned long updatedNow = millis();
-    setVisualState(VisualState::BackendError, updatedNow);
-    Serial.println("*** END CARD PROCESSING ***\n");
+    unsigned long now = millis();
+    setVisualState(VisualState::BackendError, now);
     return CardProcessResult::WifiDisconnected;
   }
 
-  Serial.println("Sending request to backend...");
-  bool ok = backend.postPlay(uid);
-  unsigned long updatedNow = millis();
-  if (ok) {
-    Serial.println("[SUCCESS] Backend request successful");
-    setVisualState(VisualState::BackendSuccess, updatedNow);
-    Serial.println("*** END CARD PROCESSING ***\n");
-    return CardProcessResult::BackendSuccess;
+  if (pendingBackendRequest || backend.isBusy()) {
+    Serial.println("[Backend] Request already in progress. Ignoring new card.");
+    return CardProcessResult::BackendBusy;
   }
 
-  Serial.println("[ERROR] Backend request failed");
-  setVisualState(VisualState::BackendError, updatedNow);
-  Serial.println("*** END CARD PROCESSING ***\n");
+  Serial.println("Starting asynchronous request to backend...");
+  if (backend.beginPostPlayAsync(uid)) {
+    pendingBackendRequest = true;
+    unsigned long now = millis();
+    setVisualState(VisualState::CardScanning, now);
+    return CardProcessResult::BackendPending;
+  }
+
+  Serial.println("[ERROR] Failed to start backend request");
+  unsigned long now = millis();
+  setVisualState(VisualState::BackendError, now);
   return CardProcessResult::BackendFailure;
+}
+
+static void handleBackendCompletion(bool success, unsigned long now) {
+  pendingBackendRequest = false;
+  if (success) {
+    Serial.println("[SUCCESS] Backend request successful");
+    setVisualState(VisualState::BackendSuccess, now);
+  } else {
+    Serial.println("[ERROR] Backend request failed");
+    setVisualState(VisualState::BackendError, now);
+  }
+  Serial.println("*** END CARD PROCESSING ***\n");
 }
 
 #if ENABLE_DEBUG_ACTIONS
@@ -260,6 +424,18 @@ static bool parseVisualState(const String &value, VisualState &state) {
   }
   if (normalized == "backend_error") {
     state = VisualState::BackendError;
+    return true;
+  }
+  if (normalized == "mdns_resolving") {
+    state = VisualState::MdnsResolving;
+    return true;
+  }
+  if (normalized == "mdns_success") {
+    state = VisualState::MdnsSuccess;
+    return true;
+  }
+  if (normalized == "mdns_error") {
+    state = VisualState::MdnsError;
     return true;
   }
   return false;
@@ -364,6 +540,23 @@ static bool handleSimulateCard(JsonVariantConst payload, String &message) {
   CardProcessResult result =
       processCardUid(String(uidValue), now, bypassDebounce, sendToBackend);
 
+  if (result == CardProcessResult::BackendPending) {
+    bool success = false;
+    Serial.println("[Debug] Waiting for backend request triggered via debug action...");
+    while (!backend.pollResult(success)) {
+      delay(10);
+      yield();
+    }
+    unsigned long completionNow = millis();
+    handleBackendCompletion(success, completionNow);
+    if (success) {
+      message = "Backend request completed successfully.";
+      return true;
+    }
+    message = "Backend request failed.";
+    return false;
+  }
+
   switch (result) {
     case CardProcessResult::DuplicateIgnored:
       message = "Duplicate UID ignored due to debounce.";
@@ -371,14 +564,14 @@ static bool handleSimulateCard(JsonVariantConst payload, String &message) {
     case CardProcessResult::BackendSkipped:
       message = "Simulated card processed without backend call.";
       return true;
-    case CardProcessResult::BackendSuccess:
-      message = "Backend request completed successfully.";
-      return true;
     case CardProcessResult::BackendFailure:
-      message = "Backend request failed.";
+      message = "Failed to start backend request.";
       return false;
     case CardProcessResult::WifiDisconnected:
       message = "Wi-Fi is disconnected; backend request skipped.";
+      return false;
+    case CardProcessResult::BackendBusy:
+      message = "Backend request already in progress.";
       return false;
   }
 
@@ -387,41 +580,89 @@ static bool handleSimulateCard(JsonVariantConst payload, String &message) {
 }
 #endif
 
+static bool scheduleMdnsQueryTask(const String &hostname, unsigned long now) {
+  if (hostname.isEmpty()) {
+    return false;
+  }
+
+  if (mdnsQueryTaskHandle != nullptr) {
+    Serial.println("[WARNING] Previous mDNS query still running; skipping new task");
+    return false;
+  }
+
+  mdnsQueryHostname = hostname;
+
+  size_t bufferSize = hostname.length() + 1;
+  char *hostnameCopy = static_cast<char *>(malloc(bufferSize));
+  if (hostnameCopy == nullptr) {
+    Serial.println("[WARNING] Insufficient memory for mDNS query task");
+    mdnsQueryState = MdnsQueryState::Failure;
+    mdnsQueryStartedAt = 0;
+    mdnsQueryFinishedAt = now;
+    return false;
+  }
+
+  hostname.toCharArray(hostnameCopy, bufferSize);
+
+  mdnsQueryState = MdnsQueryState::Pending;
+  mdnsQueryStartedAt = now;
+  mdnsQueryFinishedAt = 0;
+
+  BaseType_t taskCreated = xTaskCreate(mdnsQueryTask, "MdnsQuery",
+                                       MDNS_QUERY_TASK_STACK_SIZE, hostnameCopy,
+                                       MDNS_QUERY_TASK_PRIORITY,
+                                       &mdnsQueryTaskHandle);
+  if (taskCreated != pdPASS) {
+    Serial.println("[WARNING] Failed to start mDNS query task");
+    free(hostnameCopy);
+    mdnsQueryState = MdnsQueryState::Failure;
+    mdnsQueryFinishedAt = now;
+    mdnsQueryStartedAt = 0;
+    mdnsQueryTaskHandle = nullptr;
+    return false;
+  }
+
+  return true;
+}
+
 static void initializeMdns() {
   if (mdnsStarted) {
     return;
   }
 
+  resetMdnsQueryState();
+
   Serial.println("Initializing mDNS...");
-  if (MDNS.begin("nfc-jukebox")) {
-    mdnsStarted = true;
-    Serial.println("mDNS responder started");
-    Serial.println("ESP32 is now discoverable as nfc-jukebox.local");
-
-    // Test mDNS resolution of backend host if it's a .local domain
-    String backendHost = String(BACKEND_HOST);
-    if (backendHost.endsWith(".local")) {
-      Serial.printf("Testing mDNS resolution for backend: %s\n", BACKEND_HOST);
-
-      String hostname = backendHost;
-      hostname.replace(".local", "");
-      IPAddress resolvedIP = MDNS.queryHost(hostname);
-
-      if (resolvedIP == IPAddress(0, 0, 0, 0)) {
-        Serial.printf("[WARNING] Could not resolve %s via mDNS\n", BACKEND_HOST);
-        Serial.println("Make sure your backend server is running and mDNS is enabled");
-      } else {
-        Serial.printf("[SUCCESS] %s resolved to %s\n", BACKEND_HOST, resolvedIP.toString().c_str());
-      }
-    }
-  } else {
+  if (!MDNS.begin("nfc-jukebox")) {
     Serial.println("Error starting mDNS responder");
+    return;
+  }
+
+  mdnsStarted = true;
+  Serial.println("mDNS responder started");
+  Serial.println("ESP32 is now discoverable as nfc-jukebox.local");
+
+  String backendHost = String(BACKEND_HOST);
+  if (!backendHost.endsWith(".local")) {
+    mdnsQueryState = MdnsQueryState::NotRequired;
+    mdnsQueryStartedAt = 0;
+    mdnsQueryFinishedAt = 0;
+    return;
+  }
+
+  backendHost.replace(".local", "");
+  unsigned long now = millis();
+  if (!scheduleMdnsQueryTask(backendHost, now)) {
+    mdnsQueryFinishedAt = millis();
   }
 }
 
 void setup() {
   Serial.begin(115200);
-  delay(1000); // Give serial time to initialize
+  unsigned long serialStart = millis();
+  while (!Serial && (millis() - serialStart) < 1000) {
+    yield();
+  }
   Serial.println();
   Serial.println("=================================");
   Serial.println("Jukebox NFC starting...");
@@ -434,22 +675,22 @@ void setup() {
 
   // Connect to Wi-Fi
   Serial.println("Starting Wi-Fi connection...");
-  if (!wifi.begin()) {
-    Serial.println("Initial Wi-Fi connection failed. The device will continue retrying in the background.");
-    updateWifiVisualState(false, millis());
-  } else {
+  bool wifiReady = wifi.begin();
+  if (wifiReady) {
     Serial.println("Wi-Fi connected successfully!");
     unsigned long connectedNow = millis();
     updateWifiVisualState(true, connectedNow);
     initializeMdns();
+  } else {
+    Serial.println("Wi-Fi connection in progress...");
   }
 
-  wifiPreviouslyConnected = wifi.isConnected();
+  wifiPreviouslyConnected = wifiReady;
 
   // Initialise NFC reader
   Serial.println("Initializing NFC reader...");
   rfid.begin();
-  Serial.println("NFC reader initialized");
+  Serial.println("NFC reader initialization in progress");
 
 #if ENABLE_DEBUG_ACTIONS
   debugServer.registerAction({"set_visual_state",
@@ -480,14 +721,25 @@ void loop() {
 
   unsigned long now = millis();
 
+  rfid.begin();
+
   bool isConnected = wifi.isConnected();
   if (isConnected && !wifiPreviouslyConnected) {
     initializeMdns();
+#if ENABLE_DEBUG_ACTIONS
+    debugServer.start();
+#endif
   } else if (!isConnected && wifiPreviouslyConnected) {
     mdnsStarted = false;
+    resetMdnsQueryState();
   }
   updateWifiVisualState(isConnected, now);
   wifiPreviouslyConnected = isConnected;
+
+  MdnsQueryUpdate mdnsUpdate;
+  if (fetchMdnsQueryUpdate(mdnsUpdate)) {
+    applyMdnsUpdateFeedback(mdnsUpdate, now);
+  }
 
 #if ENABLE_DEBUG_ACTIONS
   debugServer.loop();
@@ -521,24 +773,7 @@ void loop() {
       Serial.printf("Card accepted: UID=%s\n", uid.c_str());
       setVisualState(VisualState::CardDetected, now);
 
-      if (!wifi.isConnected()) {
-        Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
-        setVisualState(VisualState::BackendError, millis());
-        now = millis();
-      } else if (pendingBackendRequest || backend.isBusy()) {
-        Serial.println("[Backend] Request already in progress. Ignoring new card.");
-      } else {
-        Serial.println("Starting asynchronous request to backend...");
-        if (backend.beginPostPlayAsync(uid)) {
-          pendingBackendRequest = true;
-          now = millis();
-          setVisualState(VisualState::CardScanning, now);
-        } else {
-          Serial.println("[ERROR] Failed to start backend request");
-          now = millis();
-          setVisualState(VisualState::BackendError, now);
-        }
-      }
+      startBackendRequest(uid);
       Serial.println("*** END CARD PROCESSING ***\n");
     }
   }
@@ -546,15 +781,8 @@ void loop() {
   if (pendingBackendRequest) {
     bool success = false;
     if (backend.pollResult(success)) {
-      pendingBackendRequest = false;
       now = millis();
-      if (success) {
-        Serial.println("[SUCCESS] Backend request successful");
-        setVisualState(VisualState::BackendSuccess, now);
-      } else {
-        Serial.println("[ERROR] Backend request failed");
-        setVisualState(VisualState::BackendError, now);
-      }
+      handleBackendCompletion(success, now);
     }
   }
 
