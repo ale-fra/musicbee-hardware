@@ -104,7 +104,8 @@ bool OtaUpdater::fetchManifest(String &versionOut, String &firmwareUrlOut,
     return false;
   }
 
-  JsonDocument doc(512);
+  JsonDocument doc;
+  doc.reserve(512);
   DeserializationError err = deserializeJson(doc, responseBody);
   if (err) {
     Serial.printf("[OTA] Failed to parse manifest JSON: %s\n",
