@@ -82,11 +82,11 @@ void DebugActionServer::setupRoutes() {
 }
 
 void DebugActionServer::handleListActions() {
-  DynamicJsonDocument doc(kListPayloadCapacity);
-  JsonArray actions = doc.createNestedArray("actions");
+  JsonDocument doc;
+  JsonArray actions = doc["actions"].to<JsonArray>();
 
   for (const DebugAction &action : actions_) {
-    JsonObject entry = actions.createNestedObject();
+    JsonObject entry = actions.add<JsonObject>();
     entry["name"] = action.name;
     entry["description"] = action.description;
   }
@@ -97,7 +97,7 @@ void DebugActionServer::handleListActions() {
 
 void DebugActionServer::handleInvokeAction() {
   if (server_.pathArg(0).isEmpty()) {
-    DynamicJsonDocument doc(128);
+    JsonDocument doc;
     doc["ok"] = false;
     doc["message"] = "Missing action name";
     sendJson(400, doc);
@@ -114,17 +114,17 @@ void DebugActionServer::handleInvokeAction() {
   }
 
   if (target == nullptr) {
-    DynamicJsonDocument doc(128);
+    JsonDocument doc;
     doc["ok"] = false;
     doc["message"] = "Unknown action";
     sendJson(404, doc);
     return;
   }
 
-  DynamicJsonDocument payloadDoc(kActionPayloadCapacity);
+  JsonDocument payloadDoc;
   DeserializationError err = deserializeJson(payloadDoc, server_.arg("plain"));
   if (err) {
-    DynamicJsonDocument doc(160);
+    JsonDocument doc;
     doc["ok"] = false;
     doc["message"] = String("Invalid JSON payload: ") + err.c_str();
     sendJson(400, doc);
@@ -135,7 +135,7 @@ void DebugActionServer::handleInvokeAction() {
   String message;
   bool ok = target->handler(payload, message);
 
-  DynamicJsonDocument response(256);
+  JsonDocument response;
   response["ok"] = ok;
   response["message"] = message;
 
