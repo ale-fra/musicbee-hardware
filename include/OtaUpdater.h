@@ -20,9 +20,11 @@ private:
   bool shouldCheck(unsigned long now) const;
   void scheduleAfterAttempt(unsigned long now);
   void checkForUpdates();
-  bool fetchManifest(String &versionOut, String &firmwareUrlOut);
-  bool resolveHost(String &hostOut);
-  bool downloadAndInstall(const String &url, const String &newVersion);
+  bool fetchManifest(String &versionOut, String &firmwareUrlOut,
+                     String &resolvedHostOut);
+  bool resolveHost(const String &host, String &resolvedOut);
+  bool downloadAndInstall(const String &url, const String &manifestHost,
+                          const String &newVersion);
   static int compareVersions(const String &lhs, const String &rhs);
 
   unsigned long _lastCheckAt;
