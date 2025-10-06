@@ -43,6 +43,14 @@ public:
    */
   bool pollResult(bool &outSuccess);
 
+  /**
+   * Resolve a hostname, performing an mDNS lookup when the provided
+   * host ends with `.local`. The resolved hostname (IP string or the
+   * original host if no lookup was necessary) is written to
+   * `resolvedOut`.
+   */
+  static bool resolveHostname(const String &host, String &resolvedOut);
+
 private:
   bool performPostPlay(const String &cardUid);
   static void requestTask(void *param);

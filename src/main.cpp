@@ -17,6 +17,7 @@
 #include "RfidReader.h"
 #include "BackendClient.h"
 #include "EffectManager.h"
+#include "OtaUpdater.h"
 
 #if ENABLE_DEBUG_ACTIONS
 #  include "DebugActionServer.h"
@@ -26,6 +27,7 @@ static WifiManager wifi;
 static RfidReader rfid;
 static BackendClient backend;
 static EffectManager effects(LED_DATA_PIN, LED_COUNT_DEFAULT, LED_BRIGHTNESS_DEFAULT);
+static OtaUpdater otaUpdater;
 
 namespace {
 constexpr float kTailPrimaryFactor = 0.5f;
@@ -770,6 +772,8 @@ void loop() {
   }
   updateWifiVisualState(isConnected, now);
   wifiPreviouslyConnected = isConnected;
+
+  otaUpdater.loop(now, isConnected);
 
   MdnsQueryUpdate mdnsUpdate;
   if (fetchMdnsQueryUpdate(mdnsUpdate)) {
