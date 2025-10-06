@@ -421,7 +421,10 @@ static void initializeMdns() {
 
 void setup() {
   Serial.begin(115200);
-  delay(1000); // Give serial time to initialize
+  unsigned long serialStart = millis();
+  while (!Serial && (millis() - serialStart) < 1000) {
+    yield();
+  }
   Serial.println();
   Serial.println("=================================");
   Serial.println("Jukebox NFC starting...");
@@ -434,17 +437,17 @@ void setup() {
 
   // Connect to Wi-Fi
   Serial.println("Starting Wi-Fi connection...");
-  if (!wifi.begin()) {
-    Serial.println("Initial Wi-Fi connection failed. The device will continue retrying in the background.");
-    updateWifiVisualState(false, millis());
-  } else {
+  bool wifiReady = wifi.begin();
+  if (wifiReady) {
     Serial.println("Wi-Fi connected successfully!");
     unsigned long connectedNow = millis();
     updateWifiVisualState(true, connectedNow);
     initializeMdns();
+  } else {
+    Serial.println("Wi-Fi connection in progress...");
   }
 
-  wifiPreviouslyConnected = wifi.isConnected();
+  wifiPreviouslyConnected = wifiReady;
 
   // Initialise NFC reader
   Serial.println("Initializing NFC reader...");
@@ -483,6 +486,9 @@ void loop() {
   bool isConnected = wifi.isConnected();
   if (isConnected && !wifiPreviouslyConnected) {
     initializeMdns();
+#if ENABLE_DEBUG_ACTIONS
+    debugServer.start();
+#endif
   } else if (!isConnected && wifiPreviouslyConnected) {
     mdnsStarted = false;
   }
