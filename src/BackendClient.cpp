@@ -58,6 +58,31 @@ bool BackendClient::pollResult(bool &outSuccess) {
   return true;
 }
 
+bool BackendClient::resolveHostname(const String &host, String &resolvedOut) {
+  if (!host.endsWith(".local")) {
+    resolvedOut = host;
+    return true;
+  }
+
+  String hostname = host;
+  hostname.replace(".local", "");
+
+  Serial.printf("[Backend] Resolving mDNS hostname %s.local...\n", hostname.c_str());
+  IPAddress serverIP = MDNS.queryHost(hostname);
+  if (serverIP == IPAddress(0, 0, 0, 0)) {
+    Serial.printf("[Backend] ERROR: mDNS resolution failed for %s.local\n", hostname.c_str());
+    Serial.println("[Backend] Make sure:");
+    Serial.println("  - The host device is running");
+    Serial.println("  - An mDNS service is advertising the hostname");
+    Serial.println("  - Both devices share the same network");
+    return false;
+  }
+
+  resolvedOut = serverIP.toString();
+  Serial.printf("[Backend] mDNS resolved to: %s\n", resolvedOut.c_str());
+  return true;
+}
+
 bool BackendClient::performPostPlay(const String &cardUid) {
   // Guard: ensure we have a valid UID
   if (cardUid.length() == 0) {
@@ -66,37 +91,18 @@ bool BackendClient::performPostPlay(const String &cardUid) {
   }
 
   // Build the request path
-  String path = String("/api/v1/cards/") + cardUid + "/play";
-  
+  String path = String(BACKEND_API_PREFIX) + "/cards/" + cardUid + "/play";
+
   String targetHost = String(BACKEND_HOST);
-  IPAddress serverIP;
-  
   Serial.printf("[Backend] Target: %s:%d\n", BACKEND_HOST, BACKEND_PORT);
   Serial.printf("[Backend] Path: %s\n", path.c_str());
-  
-  // Check if host is a .local domain (mDNS)
-  if (targetHost.endsWith(".local")) {
-    Serial.println("[Backend] Resolving mDNS hostname...");
-    
-    // Remove .local suffix for mDNS query
-    String hostname = targetHost;
-    hostname.replace(".local", "");
-    
-    // Try to resolve mDNS
-    serverIP = MDNS.queryHost(hostname);
-    
-    if (serverIP == IPAddress(0, 0, 0, 0)) {
-      Serial.println("[Backend] ERROR: mDNS resolution failed");
-      Serial.println("[Backend] Make sure:");
-      Serial.println("  - Backend server is running");
-      Serial.println("  - mDNS service is active on backend");
-      Serial.println("  - Both devices are on same network");
-      return false;
-    }
-    
-    Serial.printf("[Backend] mDNS resolved to: %s\n", serverIP.toString().c_str());
-    targetHost = serverIP.toString();
+
+  String resolvedHost;
+  if (!resolveHostname(targetHost, resolvedHost)) {
+    return false;
   }
+
+  targetHost = resolvedHost;
 
   Serial.println("[Backend] Starting HTTP request...");
 

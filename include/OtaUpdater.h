@@ -22,7 +22,6 @@ private:
   void checkForUpdates();
   bool fetchManifest(String &versionOut, String &firmwareUrlOut,
                      String &resolvedHostOut);
-  bool resolveHost(const String &host, String &resolvedOut);
   bool downloadAndInstall(const String &url, const String &manifestHost,
                           const String &newVersion);
   static int compareVersions(const String &lhs, const String &rhs);

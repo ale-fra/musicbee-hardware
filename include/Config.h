@@ -27,6 +27,8 @@ static constexpr const char *const WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
 // update secrets.h so they remain outside of source control.
 static constexpr const char *const BACKEND_HOST  = SECRET_BACKEND_HOST;
 static constexpr uint16_t         BACKEND_PORT  = SECRET_BACKEND_PORT;
+// Base prefix for REST endpoints exposed by the backend service.
+static constexpr const char *const BACKEND_API_PREFIX = "/api/v1";
 
 // Optional debug HTTP server used to trigger firmware actions without
 // physical hardware. Enable it during development to expose
@@ -92,6 +94,7 @@ static constexpr uint8_t       MAX_WIFI_RETRIES     = 20;
 
 // Firmware versioning and OTA configuration.
 static constexpr const char *const CURRENT_FIRMWARE_VERSION = "1.0.0";
+// OTA manifest endpoint relative to BACKEND_API_PREFIX.
 static constexpr const char *const OTA_MANIFEST_PATH        = "/firmware/manifest.json";
 static constexpr unsigned long     OTA_CHECK_INTERVAL_MS    =
     24UL * 60UL * 60UL * 1000UL;  // 24 hours

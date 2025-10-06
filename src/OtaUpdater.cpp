@@ -7,11 +7,11 @@
 #include "OtaUpdater.h"
 
 #include <ArduinoJson.h>
-#include <ESPmDNS.h>
 #include <HttpClient.h>
 #include <Update.h>
 #include <WiFiClient.h>
 
+#include "BackendClient.h"
 #include "Config.h"
 
 namespace {
@@ -72,7 +72,7 @@ void OtaUpdater::checkForUpdates() {
 
 bool OtaUpdater::fetchManifest(String &versionOut, String &firmwareUrlOut,
                                String &resolvedHostOut) {
-  if (!resolveHost(String(BACKEND_HOST), resolvedHostOut)) {
+  if (!BackendClient::resolveHostname(String(BACKEND_HOST), resolvedHostOut)) {
     return false;
   }
 
@@ -83,7 +83,8 @@ bool OtaUpdater::fetchManifest(String &versionOut, String &firmwareUrlOut,
   httpClient.setTimeout(OTA_HTTP_TIMEOUT_MS > 0 ? OTA_HTTP_TIMEOUT_MS :
                                                 kDefaultManifestTimeoutMs);
 
-  int statusCode = httpClient.get(OTA_MANIFEST_PATH);
+  String manifestPath = String(BACKEND_API_PREFIX) + OTA_MANIFEST_PATH;
+  int statusCode = httpClient.get(manifestPath);
   if (statusCode < 0) {
     Serial.printf("[OTA] HTTP connection failed: %d\n", statusCode);
     httpClient.stop();
@@ -122,28 +123,6 @@ bool OtaUpdater::fetchManifest(String &versionOut, String &firmwareUrlOut,
 
   versionOut = version;
   firmwareUrlOut = firmwareUrl;
-  return true;
-}
-
-bool OtaUpdater::resolveHost(const String &host, String &resolvedOut) {
-  if (!host.endsWith(".local")) {
-    resolvedOut = host;
-    return true;
-  }
-
-  String hostname = host;
-  hostname.replace(".local", "");
-  Serial.printf("[OTA] Resolving mDNS host %s.local...\n", hostname.c_str());
-  IPAddress resolved = MDNS.queryHost(hostname);
-  if (resolved == IPAddress(0, 0, 0, 0)) {
-    Serial.printf("[OTA] Failed to resolve host %s via mDNS.\n",
-                  host.c_str());
-    return false;
-  }
-
-  resolvedOut = resolved.toString();
-  Serial.printf("[OTA] Host %s resolved to %s\n", host.c_str(),
-                resolvedOut.c_str());
   return true;
 }
 
@@ -207,7 +186,7 @@ bool OtaUpdater::downloadAndInstall(const String &url,
     }
 
     String resolved;
-    if (!resolveHost(hostOnly, resolved)) {
+    if (!BackendClient::resolveHostname(hostOnly, resolved)) {
       return false;
     }
 
@@ -216,7 +195,15 @@ bool OtaUpdater::downloadAndInstall(const String &url,
     request.port = port;
     request.path = path;
   } else {
-    request.path = trimmedUrl.startsWith("/") ? trimmedUrl : String("/") + trimmedUrl;
+    if (trimmedUrl.startsWith("/")) {
+      request.path = trimmedUrl;
+    } else {
+      String prefix = String(BACKEND_API_PREFIX);
+      if (!prefix.endsWith("/")) {
+        prefix += '/';
+      }
+      request.path = prefix + trimmedUrl;
+    }
   }
 
   WiFiClient downloadClient;
