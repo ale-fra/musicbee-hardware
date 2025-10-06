@@ -17,6 +17,8 @@ public:
   virtual ~IRfidBackend() = default;
   virtual bool begin() = 0;
   virtual bool readCard(String &uidHex) = 0;
+  virtual bool isReady() const = 0;
+  virtual bool hasFailed() const = 0;
 };
 
 class RfidReader {
@@ -36,4 +38,6 @@ public:
 
 private:
   std::unique_ptr<IRfidBackend> _backend;
+  bool                         _backendReady = false;
+  bool                         _backendFailed = false;
 };

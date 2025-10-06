@@ -36,6 +36,10 @@ namespace {
 #if defined(USE_PN532)
 static constexpr unsigned long PN532_ASYNC_RESTART_DELAY_MS = 5;
 static constexpr unsigned long PN532_ASYNC_RESPONSE_TIMEOUT_MS = 75;
+static constexpr unsigned long PN532_POST_BUS_DELAY_MS = 100;
+static constexpr unsigned long PN532_POST_BEGIN_DELAY_MS = 100;
+static constexpr unsigned long PN532_FIRMWARE_RETRY_DELAY_MS = 500;
+static constexpr uint8_t       PN532_FIRMWARE_MAX_ATTEMPTS = 3;
 #endif
 
 String bytesToHexString(const uint8_t *buffer, size_t length) {
@@ -58,6 +62,10 @@ public:
       : _ssPin(ssPin), _rstPin(rstPin), _mfrc522(ssPin, rstPin) {}
 
   bool begin() override {
+    if (_initialised) {
+      return true;
+    }
+
     Serial.printf("[RFID] Initializing RC522 with SS=%d, RST=%d\n", _ssPin, _rstPin);
 
     SPI.begin();
@@ -72,11 +80,13 @@ public:
     if (version == 0x00 || version == 0xFF) {
       Serial.println("- Communication problem or invalid chip!");
       Serial.println("[RFID] Check your wiring and power supply");
+      _initialisationFailed = true;
       return false;
     }
 
     Serial.println("- OK!");
     _mfrc522.PCD_DumpVersionToSerial();
+    _initialised = true;
     return true;
   }
 
@@ -105,10 +115,20 @@ public:
     return true;
   }
 
+  bool isReady() const override {
+    return _initialised;
+  }
+
+  bool hasFailed() const override {
+    return _initialisationFailed;
+  }
+
 private:
   uint8_t  _ssPin;
   uint8_t  _rstPin;
   MFRC522 _mfrc522;
+  bool     _initialised = false;
+  bool     _initialisationFailed = false;
 };
 #endif  // defined(USE_RC522)
 
@@ -128,7 +148,7 @@ public:
         _sckPin(sckPin),
         _mosiPin(mosiPin),
         _misoPin(misoPin),
-        _pn532(ssPin) {}  // For hardware SPI, just pass SS pin
+        _pn532(ssPin) {}
 #  else
   Pn532Backend(uint8_t irqPin, uint8_t resetPin, uint8_t sdaPin, uint8_t sclPin)
       : _irqPin(irqPin),
@@ -138,69 +158,102 @@ public:
         _pn532(irqPin, resetPin) {}
 #  endif
 
-bool begin() override {
+  bool begin() override {
+    if (_initialised) {
+      return true;
+    }
+
+    if (_initialisationFailed) {
+      return false;
+    }
+
+    const unsigned long now = millis();
+
+    switch (_beginState) {
+      case BeginState::Idle:
 #  if defined(USE_PN532_SPI)
-    Serial.printf("[RFID] Initializing PN532 SPI (IRQ=%d, RST=%d, SS=%d, SCK=%d, MOSI=%d, MISO=%d)\n",
-                  _irqPin, _resetPin, _ssPin, _sckPin, _mosiPin, _misoPin);
-
-    // Initialize SPI with explicit pins
-    SPI.begin(_sckPin, _misoPin, _mosiPin, _ssPin);
-    Serial.println("[RFID] SPI bus initialized");
-    
-    // Add a small delay for hardware to stabilize
-    delay(100);
+        Serial.printf("[RFID] Initializing PN532 SPI (IRQ=%d, RST=%d, SS=%d, SCK=%d, MOSI=%d, MISO=%d)\n",
+                      _irqPin, _resetPin, _ssPin, _sckPin, _mosiPin, _misoPin);
+        SPI.begin(_sckPin, _misoPin, _mosiPin, _ssPin);
+        Serial.println("[RFID] SPI bus initialized");
 #  else
-    Serial.printf("[RFID] Initializing PN532 I2C (IRQ=%d, RST=%d, SDA=%d, SCL=%d)\n",
-                  _irqPin, _resetPin, _sdaPin, _sclPin);
-
-    Wire.begin(_sdaPin, _sclPin);
-    Serial.println("[RFID] I2C bus initialized");
-    delay(100);
+        Serial.printf("[RFID] Initializing PN532 I2C (IRQ=%d, RST=%d, SDA=%d, SCL=%d)\n",
+                      _irqPin, _resetPin, _sdaPin, _sclPin);
+        Wire.begin(_sdaPin, _sclPin);
+        Serial.println("[RFID] I2C bus initialized");
 #  endif
+        _beginState = BeginState::WaitingAfterBusInit;
+        _stateEnteredAt = now;
+        return false;
+      case BeginState::WaitingAfterBusInit:
+        if (now - _stateEnteredAt < PN532_POST_BUS_DELAY_MS) {
+          return false;
+        }
+        Serial.println("[RFID] Calling PN532 begin()...");
+        _pn532.begin();
+        _beginState = BeginState::WaitingAfterBegin;
+        _stateEnteredAt = now;
+        return false;
+      case BeginState::WaitingAfterBegin:
+        if (now - _stateEnteredAt < PN532_POST_BEGIN_DELAY_MS) {
+          return false;
+        }
+        Serial.println("[RFID] Attempting to get firmware version...");
+        _beginState = BeginState::FirmwareQuery;
+        return false;
+      case BeginState::FirmwareQuery: {
+        if (_firmwareAttempts >= PN532_FIRMWARE_MAX_ATTEMPTS) {
+          logFirmwareFailure();
+          _initialisationFailed = true;
+          _beginState = BeginState::Failed;
+          return false;
+        }
 
-    Serial.println("[RFID] Calling PN532 begin()...");
-    _pn532.begin();
-    delay(100); // Give the module time to wake up
+        if (_firmwareAttempts > 0 &&
+            now - _lastFirmwareAttemptMs < PN532_FIRMWARE_RETRY_DELAY_MS) {
+          return false;
+        }
 
-    Serial.println("[RFID] Attempting to get firmware version...");
-    
-    // Try multiple times with delays
-    uint32_t version = 0;
-    for (int attempt = 1; attempt <= 3; attempt++) {
-      Serial.printf("[RFID] Firmware version attempt %d/3...\n", attempt);
-      version = _pn532.getFirmwareVersion();
-      if (version) {
-        break;
+        uint8_t attempt = _firmwareAttempts + 1;
+        Serial.printf("[RFID] Firmware version attempt %d/%d...\n",
+                      attempt, PN532_FIRMWARE_MAX_ATTEMPTS);
+
+        uint32_t version = _pn532.getFirmwareVersion();
+        _lastFirmwareAttemptMs = now;
+        _firmwareAttempts++;
+
+        if (!version) {
+          if (_firmwareAttempts < PN532_FIRMWARE_MAX_ATTEMPTS) {
+            Serial.println("[RFID] No response, retrying...");
+          }
+          return false;
+        }
+
+        Serial.printf("[RFID] PN532 firmware: v%lu.%lu (0x%08lX)\n",
+                      (version >> 24) & 0xFF, (version >> 16) & 0xFF, version);
+        Serial.println("[RFID] Configuring SAM...");
+
+        if (!_pn532.SAMConfig()) {
+          Serial.println("[RFID] PN532 SAM configuration failed");
+          _initialisationFailed = true;
+          _beginState = BeginState::Failed;
+          return false;
+        }
+
+        Serial.println("[RFID] PN532 ready for passive reads");
+        _initialised = true;
+        _beginState = BeginState::Ready;
+        return true;
       }
-      Serial.println("[RFID] No response, retrying...");
-      delay(500);
-    }
-    
-    if (!version) {
-      Serial.println("[RFID] Failed to find PN532 after 3 attempts.");
-      Serial.println("[RFID] Troubleshooting checklist:");
-      Serial.println("[RFID]   1. Check DIP switches: SW1=OFF, SW2=ON for SPI mode");
-      Serial.println("[RFID]   2. Verify wiring matches Config.h pin definitions");
-      Serial.println("[RFID]   3. Ensure PN532 is powered with 3.3V (NOT 5V)");
-      Serial.println("[RFID]   4. Check for loose connections");
-      Serial.println("[RFID]   5. Try with shorter wires (<20cm)");
-      return false;
+      case BeginState::Ready:
+        return true;
+      case BeginState::Failed:
+        return false;
     }
 
-    Serial.printf("[RFID] PN532 firmware: v%lu.%lu (0x%08lX)\n",
-                  (version >> 24) & 0xFF, (version >> 16) & 0xFF, version);
-
-    Serial.println("[RFID] Configuring SAM...");
-    if (!_pn532.SAMConfig()) {
-      Serial.println("[RFID] PN532 SAM configuration failed");
-      return false;
-    }
-
-    Serial.println("[RFID] PN532 ready for passive reads");
-    _initialised = true;
-    return true;
+    return false;
   }
-  
+
   bool readCard(String &uidHex) override {
     if (!_initialised) {
       return false;
@@ -256,7 +309,38 @@ bool begin() override {
     return true;
   }
 
+  bool isReady() const override {
+    return _initialised;
+  }
+
+  bool hasFailed() const override {
+    return _initialisationFailed;
+  }
+
 private:
+  enum class BeginState {
+    Idle,
+    WaitingAfterBusInit,
+    WaitingAfterBegin,
+    FirmwareQuery,
+    Ready,
+    Failed
+  };
+
+  void logFirmwareFailure() {
+    if (_firmwareFailureLogged) {
+      return;
+    }
+    Serial.println("[RFID] Failed to find PN532 after 3 attempts.");
+    Serial.println("[RFID] Troubleshooting checklist:");
+    Serial.println("[RFID]   1. Check DIP switches: SW1=OFF, SW2=ON for SPI mode");
+    Serial.println("[RFID]   2. Verify wiring matches Config.h pin definitions");
+    Serial.println("[RFID]   3. Ensure PN532 is powered with 3.3V (NOT 5V)");
+    Serial.println("[RFID]   4. Check for loose connections");
+    Serial.println("[RFID]   5. Try with shorter wires (<20cm)");
+    _firmwareFailureLogged = true;
+  }
+
   uint8_t _irqPin;
   uint8_t _resetPin;
 #  if defined(USE_PN532_SPI)
@@ -273,47 +357,77 @@ private:
   bool           _awaitingPassiveTarget = false;
   unsigned long  _lastDetectionCommandMs = 0;
   bool           _loggedStartFailure = false;
+  BeginState     _beginState = BeginState::Idle;
+  unsigned long  _stateEnteredAt = 0;
+  unsigned long  _lastFirmwareAttemptMs = 0;
+  uint8_t        _firmwareAttempts = 0;
+  bool           _initialisationFailed = false;
+  bool           _firmwareFailureLogged = false;
 };
 #endif  // defined(USE_PN532)
 
 }  // namespace
 
 void RfidReader::begin() {
-  switch (NFC_READER_TYPE) {
-#if defined(USE_RC522)
-    case RfidHardwareType::RC522:
-      _backend.reset(new Rc522Backend(NFC_SS_PIN, NFC_RST_PIN));
-      break;
-#endif
-#if defined(USE_PN532)
-    case RfidHardwareType::PN532:
-      _backend.reset(new Pn532Backend(PN532_IRQ_PIN,
-                                      PN532_RST_PIN,
-#  if defined(USE_PN532_SPI)
-                                      PN532_SS_PIN,
-                                      PN532_SCK_PIN,
-                                      PN532_MOSI_PIN,
-                                      PN532_MISO_PIN
-#  else
-                                      PN532_SDA_PIN,
-                                      PN532_SCL_PIN
-#  endif
-                                      ));
-      break;
-#endif
-    default:
-      Serial.println("[RFID] Unsupported reader type selected");
-      _backend.reset();
-      return;
+  if (_backendReady || _backendFailed) {
+    return;
   }
 
-  if (_backend && !_backend->begin()) {
+  if (!_backend) {
+    switch (NFC_READER_TYPE) {
+#if defined(USE_RC522)
+      case RfidHardwareType::RC522:
+        _backend.reset(new Rc522Backend(NFC_SS_PIN, NFC_RST_PIN));
+        break;
+#endif
+#if defined(USE_PN532)
+      case RfidHardwareType::PN532:
+        _backend.reset(new Pn532Backend(PN532_IRQ_PIN,
+                                        PN532_RST_PIN,
+#  if defined(USE_PN532_SPI)
+                                        PN532_SS_PIN,
+                                        PN532_SCK_PIN,
+                                        PN532_MOSI_PIN,
+                                        PN532_MISO_PIN
+#  else
+                                        PN532_SDA_PIN,
+                                        PN532_SCL_PIN
+#  endif
+                                        ));
+        break;
+#endif
+      default:
+        Serial.println("[RFID] Unsupported reader type selected");
+        _backend.reset();
+        _backendFailed = true;
+        return;
+    }
+  }
+
+  if (!_backend) {
+    return;
+  }
+
+  if (_backend->begin()) {
+    _backendReady = true;
+    return;
+  }
+
+  if (_backend->hasFailed()) {
     Serial.println("[RFID] Backend initialisation failed");
     _backend.reset();
+    _backendFailed = true;
   }
 }
 
 bool RfidReader::readCard(String &uidHex) {
+  if (!_backendReady) {
+    begin();
+    if (!_backendReady) {
+      return false;
+    }
+  }
+
   if (!_backend) {
     Serial.println("[RFID] No reader backend is initialised");
     return false;
