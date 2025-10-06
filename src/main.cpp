@@ -6,6 +6,11 @@
 
 #include <Arduino.h>
 #include <ESPmDNS.h>
+#include <cstring>
+#include <cstdlib>
+#include <memory>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "Config.h"
 #include "WifiManager.h"
@@ -39,7 +44,10 @@ enum class VisualState {
   CardDetected,
   CardScanning,
   BackendSuccess,
-  BackendError
+  BackendError,
+  MdnsResolving,
+  MdnsSuccess,
+  MdnsError
 };
 
 static VisualState baseVisualState = VisualState::WifiConnecting;
@@ -49,6 +57,98 @@ static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
 static bool pendingBackendRequest = false;
 static bool visualStateInitialized = false;
 static bool wifiPreviouslyConnected = false;
+static constexpr UBaseType_t MDNS_QUERY_TASK_PRIORITY = 1;
+static constexpr uint16_t MDNS_QUERY_TASK_STACK_SIZE = 4096;
+
+enum class MdnsQueryState {
+  Idle,
+  NotRequired,
+  Pending,
+  Success,
+  Failure
+};
+
+static volatile MdnsQueryState mdnsQueryState = MdnsQueryState::Idle;
+static MdnsQueryState lastReportedMdnsState = MdnsQueryState::Idle;
+static TaskHandle_t mdnsQueryTaskHandle = nullptr;
+static String mdnsQueryHostname;
+static IPAddress mdnsResolvedIp;
+static unsigned long mdnsQueryFinishedAt = 0;
+static unsigned long mdnsQueryStartedAt = 0;
+
+static void mdnsQueryTask(void *param);
+static bool isCardFlowState(VisualState state);
+static void setVisualState(VisualState state, unsigned long now);
+
+static void resetMdnsQueryState() {
+  if (mdnsQueryTaskHandle == nullptr) {
+    mdnsQueryHostname = "";
+  }
+  mdnsResolvedIp = IPAddress();
+  mdnsQueryFinishedAt = 0;
+  mdnsQueryStartedAt = 0;
+  mdnsQueryState = MdnsQueryState::Idle;
+  lastReportedMdnsState = MdnsQueryState::Idle;
+}
+
+static void showMdnsVisualState(VisualState state, unsigned long now) {
+  if (!isCardFlowState(currentVisualState)) {
+    setVisualState(state, now);
+  }
+}
+
+static void updateMdnsQueryFeedback(unsigned long now) {
+  MdnsQueryState state = mdnsQueryState;
+  if (state == lastReportedMdnsState) {
+    return;
+  }
+  lastReportedMdnsState = state;
+
+  switch (state) {
+    case MdnsQueryState::Pending:
+      Serial.printf("[mDNS] Resolving %s.local asynchronously...\n", mdnsQueryHostname.c_str());
+      showMdnsVisualState(VisualState::MdnsResolving, now);
+      break;
+    case MdnsQueryState::Success:
+      Serial.printf("[mDNS] %s.local resolved to %s\n",
+                    mdnsQueryHostname.c_str(), mdnsResolvedIp.toString().c_str());
+      if (mdnsQueryStartedAt != 0 && mdnsQueryFinishedAt >= mdnsQueryStartedAt) {
+        Serial.printf("[mDNS] Query completed in %lums\n",
+                      mdnsQueryFinishedAt - mdnsQueryStartedAt);
+      }
+      showMdnsVisualState(VisualState::MdnsSuccess, now);
+      break;
+    case MdnsQueryState::Failure:
+      Serial.printf("[WARNING] Could not resolve %s.local via mDNS\n",
+                    mdnsQueryHostname.c_str());
+      Serial.println("Make sure your backend server is running and mDNS is enabled");
+      if (mdnsQueryStartedAt != 0 && mdnsQueryFinishedAt >= mdnsQueryStartedAt) {
+        Serial.printf("[mDNS] Query failed after %lums\n",
+                      mdnsQueryFinishedAt - mdnsQueryStartedAt);
+      }
+      showMdnsVisualState(VisualState::MdnsError, now);
+      break;
+    case MdnsQueryState::NotRequired:
+    case MdnsQueryState::Idle:
+      break;
+  }
+}
+
+static void mdnsQueryTask(void *param) {
+  std::unique_ptr<char, void (*)(void *)> hostnamePtr(static_cast<char *>(param), free);
+  const char *hostnameCStr = hostnamePtr.get();
+  IPAddress resolved = MDNS.queryHost(hostnameCStr ? hostnameCStr : "");
+
+  mdnsResolvedIp = resolved;
+  mdnsQueryFinishedAt = millis();
+  if (resolved == IPAddress(0, 0, 0, 0)) {
+    mdnsQueryState = MdnsQueryState::Failure;
+  } else {
+    mdnsQueryState = MdnsQueryState::Success;
+  }
+  mdnsQueryTaskHandle = nullptr;
+  vTaskDelete(nullptr);
+}
 
 static bool isCardFlowState(VisualState state) {
   return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
@@ -56,7 +156,8 @@ static bool isCardFlowState(VisualState state) {
 }
 
 static bool isTransientState(VisualState state) {
-  return isCardFlowState(state);
+  return isCardFlowState(state) || state == VisualState::MdnsSuccess ||
+         state == VisualState::MdnsError;
 }
 
 static const char *visualStateName(VisualState state) {
@@ -77,6 +178,12 @@ static const char *visualStateName(VisualState state) {
       return "BackendSuccess";
     case VisualState::BackendError:
       return "BackendError";
+    case VisualState::MdnsResolving:
+      return "MdnsResolving";
+    case VisualState::MdnsSuccess:
+      return "MdnsSuccess";
+    case VisualState::MdnsError:
+      return "MdnsError";
   }
   return "Unknown";
 }
@@ -114,6 +221,18 @@ static void applyVisualState(VisualState state, unsigned long now) {
       break;
     case VisualState::BackendError:
       effects.showFade(255, 0, 0, 0, 0, 0, kErrorFadeDurationMs, now);
+      break;
+    case VisualState::MdnsResolving:
+      effects.showComet(0, 128, 255,
+                        kTailPrimaryFactor, kTailSecondaryFactor,
+                        CometEffect::Direction::Clockwise,
+                        kWifiCometIntervalMs, now);
+      break;
+    case VisualState::MdnsSuccess:
+      effects.showSolidColor(0, 64, 0, now);
+      break;
+    case VisualState::MdnsError:
+      effects.showFade(255, 32, 32, 0, 0, 0, kErrorFadeDurationMs, now);
       break;
   }
 }
@@ -262,6 +381,18 @@ static bool parseVisualState(const String &value, VisualState &state) {
     state = VisualState::BackendError;
     return true;
   }
+  if (normalized == "mdns_resolving") {
+    state = VisualState::MdnsResolving;
+    return true;
+  }
+  if (normalized == "mdns_success") {
+    state = VisualState::MdnsSuccess;
+    return true;
+  }
+  if (normalized == "mdns_error") {
+    state = VisualState::MdnsError;
+    return true;
+  }
   return false;
 }
 
@@ -392,6 +523,8 @@ static void initializeMdns() {
     return;
   }
 
+  resetMdnsQueryState();
+
   Serial.println("Initializing mDNS...");
   if (MDNS.begin("nfc-jukebox")) {
     mdnsStarted = true;
@@ -401,22 +534,46 @@ static void initializeMdns() {
     // Test mDNS resolution of backend host if it's a .local domain
     String backendHost = String(BACKEND_HOST);
     if (backendHost.endsWith(".local")) {
-      Serial.printf("Testing mDNS resolution for backend: %s\n", BACKEND_HOST);
-
-      String hostname = backendHost;
-      hostname.replace(".local", "");
-      IPAddress resolvedIP = MDNS.queryHost(hostname);
-
-      if (resolvedIP == IPAddress(0, 0, 0, 0)) {
-        Serial.printf("[WARNING] Could not resolve %s via mDNS\n", BACKEND_HOST);
-        Serial.println("Make sure your backend server is running and mDNS is enabled");
+      mdnsQueryHostname = backendHost;
+      mdnsQueryHostname.replace(".local", "");
+      mdnsQueryState = MdnsQueryState::Pending;
+      mdnsQueryStartedAt = millis();
+      size_t bufferSize = mdnsQueryHostname.length() + 1;
+      char *hostnameCopy = static_cast<char *>(malloc(bufferSize));
+      if (hostnameCopy == nullptr) {
+        Serial.println("[WARNING] Insufficient memory for mDNS query task");
+        mdnsQueryState = MdnsQueryState::Failure;
+        mdnsQueryFinishedAt = millis();
+        mdnsQueryStartedAt = 0;
+      } else if (mdnsQueryTaskHandle != nullptr) {
+        Serial.println("[WARNING] Previous mDNS query still running; skipping new task");
+        free(hostnameCopy);
+        mdnsQueryState = MdnsQueryState::Failure;
+        mdnsQueryFinishedAt = millis();
+        mdnsQueryStartedAt = 0;
       } else {
-        Serial.printf("[SUCCESS] %s resolved to %s\n", BACKEND_HOST, resolvedIP.toString().c_str());
+        mdnsQueryHostname.toCharArray(hostnameCopy, bufferSize);
+        BaseType_t taskCreated = xTaskCreate(
+            mdnsQueryTask, "MdnsQuery", MDNS_QUERY_TASK_STACK_SIZE, hostnameCopy,
+            MDNS_QUERY_TASK_PRIORITY, &mdnsQueryTaskHandle);
+        if (taskCreated != pdPASS) {
+          Serial.println("[WARNING] Failed to start mDNS query task");
+          free(hostnameCopy);
+          mdnsQueryState = MdnsQueryState::Failure;
+          mdnsQueryFinishedAt = millis();
+          mdnsQueryStartedAt = 0;
+        }
       }
+    } else {
+      mdnsQueryState = MdnsQueryState::NotRequired;
+      mdnsQueryStartedAt = 0;
+      mdnsQueryFinishedAt = 0;
     }
   } else {
     Serial.println("Error starting mDNS responder");
   }
+
+  updateMdnsQueryFeedback(millis());
 }
 
 void setup() {
@@ -491,9 +648,12 @@ void loop() {
 #endif
   } else if (!isConnected && wifiPreviouslyConnected) {
     mdnsStarted = false;
+    resetMdnsQueryState();
   }
   updateWifiVisualState(isConnected, now);
   wifiPreviouslyConnected = isConnected;
+
+  updateMdnsQueryFeedback(now);
 
 #if ENABLE_DEBUG_ACTIONS
   debugServer.loop();
