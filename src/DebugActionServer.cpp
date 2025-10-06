@@ -74,7 +74,7 @@ void DebugActionServer::setupRoutes() {
              [this]() { handleInvokeAction(); });
 
   server_.onNotFound([this]() {
-    DynamicJsonDocument doc(128);
+  JsonDocument doc;
     doc["ok"] = false;
     doc["message"] = "Endpoint not found";
     sendJson(404, doc);
