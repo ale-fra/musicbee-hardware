@@ -68,6 +68,14 @@ enum class MdnsQueryState {
   Failure
 };
 
+struct MdnsQueryUpdate {
+  MdnsQueryState state = MdnsQueryState::Idle;
+  String hostname;
+  IPAddress resolvedIp;
+  unsigned long startedAt = 0;
+  unsigned long finishedAt = 0;
+};
+
 static volatile MdnsQueryState mdnsQueryState = MdnsQueryState::Idle;
 static MdnsQueryState lastReportedMdnsState = MdnsQueryState::Idle;
 static TaskHandle_t mdnsQueryTaskHandle = nullptr;
@@ -76,6 +84,7 @@ static IPAddress mdnsResolvedIp;
 static unsigned long mdnsQueryFinishedAt = 0;
 static unsigned long mdnsQueryStartedAt = 0;
 
+static bool scheduleMdnsQueryTask(const String &hostname, unsigned long now);
 static void mdnsQueryTask(void *param);
 static bool isCardFlowState(VisualState state);
 static void setVisualState(VisualState state, unsigned long now);
@@ -97,34 +106,44 @@ static void showMdnsVisualState(VisualState state, unsigned long now) {
   }
 }
 
-static void updateMdnsQueryFeedback(unsigned long now) {
+static bool fetchMdnsQueryUpdate(MdnsQueryUpdate &out) {
   MdnsQueryState state = mdnsQueryState;
   if (state == lastReportedMdnsState) {
-    return;
+    return false;
   }
-  lastReportedMdnsState = state;
 
-  switch (state) {
+  lastReportedMdnsState = state;
+  out.state = state;
+  out.hostname = mdnsQueryHostname;
+  out.resolvedIp = mdnsResolvedIp;
+  out.startedAt = mdnsQueryStartedAt;
+  out.finishedAt = mdnsQueryFinishedAt;
+  return true;
+}
+
+static void applyMdnsUpdateFeedback(const MdnsQueryUpdate &update, unsigned long now) {
+  switch (update.state) {
     case MdnsQueryState::Pending:
-      Serial.printf("[mDNS] Resolving %s.local asynchronously...\n", mdnsQueryHostname.c_str());
+      Serial.printf("[mDNS] Resolving %s.local asynchronously...\n",
+                    update.hostname.c_str());
       showMdnsVisualState(VisualState::MdnsResolving, now);
       break;
     case MdnsQueryState::Success:
       Serial.printf("[mDNS] %s.local resolved to %s\n",
-                    mdnsQueryHostname.c_str(), mdnsResolvedIp.toString().c_str());
-      if (mdnsQueryStartedAt != 0 && mdnsQueryFinishedAt >= mdnsQueryStartedAt) {
+                    update.hostname.c_str(), update.resolvedIp.toString().c_str());
+      if (update.startedAt != 0 && update.finishedAt >= update.startedAt) {
         Serial.printf("[mDNS] Query completed in %lums\n",
-                      mdnsQueryFinishedAt - mdnsQueryStartedAt);
+                      update.finishedAt - update.startedAt);
       }
       showMdnsVisualState(VisualState::MdnsSuccess, now);
       break;
     case MdnsQueryState::Failure:
       Serial.printf("[WARNING] Could not resolve %s.local via mDNS\n",
-                    mdnsQueryHostname.c_str());
+                    update.hostname.c_str());
       Serial.println("Make sure your backend server is running and mDNS is enabled");
-      if (mdnsQueryStartedAt != 0 && mdnsQueryFinishedAt >= mdnsQueryStartedAt) {
+      if (update.startedAt != 0 && update.finishedAt >= update.startedAt) {
         Serial.printf("[mDNS] Query failed after %lums\n",
-                      mdnsQueryFinishedAt - mdnsQueryStartedAt);
+                      update.finishedAt - update.startedAt);
       }
       showMdnsVisualState(VisualState::MdnsError, now);
       break;
@@ -518,6 +537,51 @@ static bool handleSimulateCard(JsonVariantConst payload, String &message) {
 }
 #endif
 
+static bool scheduleMdnsQueryTask(const String &hostname, unsigned long now) {
+  if (hostname.isEmpty()) {
+    return false;
+  }
+
+  if (mdnsQueryTaskHandle != nullptr) {
+    Serial.println("[WARNING] Previous mDNS query still running; skipping new task");
+    return false;
+  }
+
+  mdnsQueryHostname = hostname;
+
+  size_t bufferSize = hostname.length() + 1;
+  char *hostnameCopy = static_cast<char *>(malloc(bufferSize));
+  if (hostnameCopy == nullptr) {
+    Serial.println("[WARNING] Insufficient memory for mDNS query task");
+    mdnsQueryState = MdnsQueryState::Failure;
+    mdnsQueryStartedAt = 0;
+    mdnsQueryFinishedAt = now;
+    return false;
+  }
+
+  hostname.toCharArray(hostnameCopy, bufferSize);
+
+  mdnsQueryState = MdnsQueryState::Pending;
+  mdnsQueryStartedAt = now;
+  mdnsQueryFinishedAt = 0;
+
+  BaseType_t taskCreated = xTaskCreate(mdnsQueryTask, "MdnsQuery",
+                                       MDNS_QUERY_TASK_STACK_SIZE, hostnameCopy,
+                                       MDNS_QUERY_TASK_PRIORITY,
+                                       &mdnsQueryTaskHandle);
+  if (taskCreated != pdPASS) {
+    Serial.println("[WARNING] Failed to start mDNS query task");
+    free(hostnameCopy);
+    mdnsQueryState = MdnsQueryState::Failure;
+    mdnsQueryFinishedAt = now;
+    mdnsQueryStartedAt = 0;
+    mdnsQueryTaskHandle = nullptr;
+    return false;
+  }
+
+  return true;
+}
+
 static void initializeMdns() {
   if (mdnsStarted) {
     return;
@@ -526,54 +590,28 @@ static void initializeMdns() {
   resetMdnsQueryState();
 
   Serial.println("Initializing mDNS...");
-  if (MDNS.begin("nfc-jukebox")) {
-    mdnsStarted = true;
-    Serial.println("mDNS responder started");
-    Serial.println("ESP32 is now discoverable as nfc-jukebox.local");
-
-    // Test mDNS resolution of backend host if it's a .local domain
-    String backendHost = String(BACKEND_HOST);
-    if (backendHost.endsWith(".local")) {
-      mdnsQueryHostname = backendHost;
-      mdnsQueryHostname.replace(".local", "");
-      mdnsQueryState = MdnsQueryState::Pending;
-      mdnsQueryStartedAt = millis();
-      size_t bufferSize = mdnsQueryHostname.length() + 1;
-      char *hostnameCopy = static_cast<char *>(malloc(bufferSize));
-      if (hostnameCopy == nullptr) {
-        Serial.println("[WARNING] Insufficient memory for mDNS query task");
-        mdnsQueryState = MdnsQueryState::Failure;
-        mdnsQueryFinishedAt = millis();
-        mdnsQueryStartedAt = 0;
-      } else if (mdnsQueryTaskHandle != nullptr) {
-        Serial.println("[WARNING] Previous mDNS query still running; skipping new task");
-        free(hostnameCopy);
-        mdnsQueryState = MdnsQueryState::Failure;
-        mdnsQueryFinishedAt = millis();
-        mdnsQueryStartedAt = 0;
-      } else {
-        mdnsQueryHostname.toCharArray(hostnameCopy, bufferSize);
-        BaseType_t taskCreated = xTaskCreate(
-            mdnsQueryTask, "MdnsQuery", MDNS_QUERY_TASK_STACK_SIZE, hostnameCopy,
-            MDNS_QUERY_TASK_PRIORITY, &mdnsQueryTaskHandle);
-        if (taskCreated != pdPASS) {
-          Serial.println("[WARNING] Failed to start mDNS query task");
-          free(hostnameCopy);
-          mdnsQueryState = MdnsQueryState::Failure;
-          mdnsQueryFinishedAt = millis();
-          mdnsQueryStartedAt = 0;
-        }
-      }
-    } else {
-      mdnsQueryState = MdnsQueryState::NotRequired;
-      mdnsQueryStartedAt = 0;
-      mdnsQueryFinishedAt = 0;
-    }
-  } else {
+  if (!MDNS.begin("nfc-jukebox")) {
     Serial.println("Error starting mDNS responder");
+    return;
   }
 
-  updateMdnsQueryFeedback(millis());
+  mdnsStarted = true;
+  Serial.println("mDNS responder started");
+  Serial.println("ESP32 is now discoverable as nfc-jukebox.local");
+
+  String backendHost = String(BACKEND_HOST);
+  if (!backendHost.endsWith(".local")) {
+    mdnsQueryState = MdnsQueryState::NotRequired;
+    mdnsQueryStartedAt = 0;
+    mdnsQueryFinishedAt = 0;
+    return;
+  }
+
+  backendHost.replace(".local", "");
+  unsigned long now = millis();
+  if (!scheduleMdnsQueryTask(backendHost, now)) {
+    mdnsQueryFinishedAt = millis();
+  }
 }
 
 void setup() {
@@ -655,7 +693,10 @@ void loop() {
   updateWifiVisualState(isConnected, now);
   wifiPreviouslyConnected = isConnected;
 
-  updateMdnsQueryFeedback(now);
+  MdnsQueryUpdate mdnsUpdate;
+  if (fetchMdnsQueryUpdate(mdnsUpdate)) {
+    applyMdnsUpdateFeedback(mdnsUpdate, now);
+  }
 
 #if ENABLE_DEBUG_ACTIONS
   debugServer.loop();
