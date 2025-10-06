@@ -177,10 +177,14 @@ static DebugActionServer debugServer(DEBUG_SERVER_PORT);
 enum class CardProcessResult {
   DuplicateIgnored,
   BackendSkipped,
-  BackendSuccess,
+  BackendPending,
   BackendFailure,
-  WifiDisconnected
+  WifiDisconnected,
+  BackendBusy
 };
+
+static void handleBackendCompletion(bool success, unsigned long now);
+static CardProcessResult startBackendRequest(const String &uid);
 
 static CardProcessResult processCardUid(const String &uid, unsigned long now,
                                        bool bypassDebounce, bool sendToBackend) {
@@ -209,28 +213,50 @@ static CardProcessResult processCardUid(const String &uid, unsigned long now,
     return CardProcessResult::BackendSkipped;
   }
 
+  CardProcessResult backendResult = startBackendRequest(uid);
+  if (backendResult != CardProcessResult::BackendPending) {
+    Serial.println("*** END CARD PROCESSING ***\n");
+  }
+  return backendResult;
+}
+
+static CardProcessResult startBackendRequest(const String &uid) {
   if (!wifi.isConnected()) {
     Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
-    unsigned long updatedNow = millis();
-    setVisualState(VisualState::BackendError, updatedNow);
-    Serial.println("*** END CARD PROCESSING ***\n");
+    unsigned long now = millis();
+    setVisualState(VisualState::BackendError, now);
     return CardProcessResult::WifiDisconnected;
   }
 
-  Serial.println("Sending request to backend...");
-  bool ok = backend.postPlay(uid);
-  unsigned long updatedNow = millis();
-  if (ok) {
-    Serial.println("[SUCCESS] Backend request successful");
-    setVisualState(VisualState::BackendSuccess, updatedNow);
-    Serial.println("*** END CARD PROCESSING ***\n");
-    return CardProcessResult::BackendSuccess;
+  if (pendingBackendRequest || backend.isBusy()) {
+    Serial.println("[Backend] Request already in progress. Ignoring new card.");
+    return CardProcessResult::BackendBusy;
   }
 
-  Serial.println("[ERROR] Backend request failed");
-  setVisualState(VisualState::BackendError, updatedNow);
-  Serial.println("*** END CARD PROCESSING ***\n");
+  Serial.println("Starting asynchronous request to backend...");
+  if (backend.beginPostPlayAsync(uid)) {
+    pendingBackendRequest = true;
+    unsigned long now = millis();
+    setVisualState(VisualState::CardScanning, now);
+    return CardProcessResult::BackendPending;
+  }
+
+  Serial.println("[ERROR] Failed to start backend request");
+  unsigned long now = millis();
+  setVisualState(VisualState::BackendError, now);
   return CardProcessResult::BackendFailure;
+}
+
+static void handleBackendCompletion(bool success, unsigned long now) {
+  pendingBackendRequest = false;
+  if (success) {
+    Serial.println("[SUCCESS] Backend request successful");
+    setVisualState(VisualState::BackendSuccess, now);
+  } else {
+    Serial.println("[ERROR] Backend request failed");
+    setVisualState(VisualState::BackendError, now);
+  }
+  Serial.println("*** END CARD PROCESSING ***\n");
 }
 
 #if ENABLE_DEBUG_ACTIONS
@@ -364,6 +390,23 @@ static bool handleSimulateCard(JsonVariantConst payload, String &message) {
   CardProcessResult result =
       processCardUid(String(uidValue), now, bypassDebounce, sendToBackend);
 
+  if (result == CardProcessResult::BackendPending) {
+    bool success = false;
+    Serial.println("[Debug] Waiting for backend request triggered via debug action...");
+    while (!backend.pollResult(success)) {
+      delay(10);
+      yield();
+    }
+    unsigned long completionNow = millis();
+    handleBackendCompletion(success, completionNow);
+    if (success) {
+      message = "Backend request completed successfully.";
+      return true;
+    }
+    message = "Backend request failed.";
+    return false;
+  }
+
   switch (result) {
     case CardProcessResult::DuplicateIgnored:
       message = "Duplicate UID ignored due to debounce.";
@@ -371,14 +414,14 @@ static bool handleSimulateCard(JsonVariantConst payload, String &message) {
     case CardProcessResult::BackendSkipped:
       message = "Simulated card processed without backend call.";
       return true;
-    case CardProcessResult::BackendSuccess:
-      message = "Backend request completed successfully.";
-      return true;
     case CardProcessResult::BackendFailure:
-      message = "Backend request failed.";
+      message = "Failed to start backend request.";
       return false;
     case CardProcessResult::WifiDisconnected:
       message = "Wi-Fi is disconnected; backend request skipped.";
+      return false;
+    case CardProcessResult::BackendBusy:
+      message = "Backend request already in progress.";
       return false;
   }
 
@@ -527,24 +570,7 @@ void loop() {
       Serial.printf("Card accepted: UID=%s\n", uid.c_str());
       setVisualState(VisualState::CardDetected, now);
 
-      if (!wifi.isConnected()) {
-        Serial.println("[ERROR] Not connected to Wi-Fi. Skipping backend request.");
-        setVisualState(VisualState::BackendError, millis());
-        now = millis();
-      } else if (pendingBackendRequest || backend.isBusy()) {
-        Serial.println("[Backend] Request already in progress. Ignoring new card.");
-      } else {
-        Serial.println("Starting asynchronous request to backend...");
-        if (backend.beginPostPlayAsync(uid)) {
-          pendingBackendRequest = true;
-          now = millis();
-          setVisualState(VisualState::CardScanning, now);
-        } else {
-          Serial.println("[ERROR] Failed to start backend request");
-          now = millis();
-          setVisualState(VisualState::BackendError, now);
-        }
-      }
+      startBackendRequest(uid);
       Serial.println("*** END CARD PROCESSING ***\n");
     }
   }
@@ -552,15 +578,8 @@ void loop() {
   if (pendingBackendRequest) {
     bool success = false;
     if (backend.pollResult(success)) {
-      pendingBackendRequest = false;
       now = millis();
-      if (success) {
-        Serial.println("[SUCCESS] Backend request successful");
-        setVisualState(VisualState::BackendSuccess, now);
-      } else {
-        Serial.println("[ERROR] Backend request failed");
-        setVisualState(VisualState::BackendError, now);
-      }
+      handleBackendCompletion(success, now);
     }
   }
 
