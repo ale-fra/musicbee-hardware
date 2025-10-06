@@ -34,6 +34,7 @@ constexpr unsigned long kWifiCometIntervalMs = 40;
 constexpr unsigned long kCardSpinnerIntervalMs = 40;
 constexpr unsigned long kSuccessSpinIntervalMs = 28;
 constexpr unsigned long kErrorFadeDurationMs = 300;
+constexpr unsigned long kTransientEffectDurationMs = 2500;
 }
 
 enum class VisualState {
@@ -50,12 +51,167 @@ enum class VisualState {
   MdnsError
 };
 
-static VisualState baseVisualState = VisualState::WifiConnecting;
-static VisualState currentVisualState = VisualState::WifiConnecting;
-static unsigned long visualStateChangedAt = 0;
-static constexpr unsigned long TRANSIENT_EFFECT_DURATION_MS = 2500;
-static bool pendingBackendRequest = false;
-static bool visualStateInitialized = false;
+class VisualStateController {
+public:
+  explicit VisualStateController(EffectManager &effects) : _effects(effects) {}
+
+  VisualState currentState() const { return _currentState; }
+
+  void setState(VisualState state, unsigned long now) {
+    if (_initialized && _currentState == state) {
+      return;
+    }
+    if (_currentState != state) {
+      Serial.printf("[State] Transitioning from %s to %s at %lums\n",
+                    stateName(_currentState), stateName(state), now);
+    }
+    _currentState = state;
+    _stateChangedAt = now;
+    _initialized = true;
+    applyState(state, now);
+  }
+
+  void setBaseState(VisualState state, unsigned long now) {
+    _baseState = state;
+    bool shouldApply = !isTransientState(_currentState) || _currentState == state;
+    if (_currentState == VisualState::CardScanning && _backendPending) {
+      shouldApply = false;
+    }
+    if (shouldApply) {
+      setState(state, now);
+    }
+  }
+
+  void refresh(unsigned long now) {
+    if (isTransientState(_currentState) &&
+        now - _stateChangedAt >= kTransientEffectDurationMs) {
+      if (_backendPending) {
+        setState(VisualState::CardScanning, now);
+      } else {
+        setState(_baseState, now);
+      }
+    }
+  }
+
+  void updateWifiState(bool isConnected, bool wasPreviouslyConnected, unsigned long now) {
+    VisualState target = VisualState::WifiConnecting;
+    if (isConnected) {
+      target = VisualState::WifiConnected;
+    } else if (_initialized && wasPreviouslyConnected) {
+      target = VisualState::WifiError;
+    }
+    setBaseState(target, now);
+  }
+
+  void onBackendRequestStarted(unsigned long now) {
+    _backendPending = true;
+    setState(VisualState::CardScanning, now);
+  }
+
+  void onBackendRequestFinished(bool success, unsigned long now) {
+    _backendPending = false;
+    setState(success ? VisualState::BackendSuccess : VisualState::BackendError, now);
+  }
+
+  bool isBackendPending() const { return _backendPending; }
+
+  static bool isCardFlowState(VisualState state) {
+    return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
+           state == VisualState::BackendError;
+  }
+
+  static bool isTransientState(VisualState state) {
+    return isCardFlowState(state) || state == VisualState::MdnsSuccess ||
+           state == VisualState::MdnsError;
+  }
+
+private:
+  static const char *stateName(VisualState state) {
+    switch (state) {
+      case VisualState::Idle:
+        return "Idle";
+      case VisualState::WifiConnecting:
+        return "WifiConnecting";
+      case VisualState::WifiConnected:
+        return "WifiConnected";
+      case VisualState::WifiError:
+        return "WifiError";
+      case VisualState::CardDetected:
+        return "CardDetected";
+      case VisualState::CardScanning:
+        return "CardScanning";
+      case VisualState::BackendSuccess:
+        return "BackendSuccess";
+      case VisualState::BackendError:
+        return "BackendError";
+      case VisualState::MdnsResolving:
+        return "MdnsResolving";
+      case VisualState::MdnsSuccess:
+        return "MdnsSuccess";
+      case VisualState::MdnsError:
+        return "MdnsError";
+    }
+    return "Unknown";
+  }
+
+  void applyState(VisualState state, unsigned long now) {
+    switch (state) {
+      case VisualState::Idle:
+        _effects.showSolidColor(0, 0, 0, now);
+        break;
+      case VisualState::WifiConnecting:
+        _effects.showComet(0, 0, 255,
+                           kTailPrimaryFactor, kTailSecondaryFactor,
+                           CometEffect::Direction::Clockwise,
+                           kWifiCometIntervalMs, now);
+        break;
+      case VisualState::WifiConnected:
+        _effects.breathingEffect().setPeriod(1500);
+        _effects.showBreathing(0, 128, 255, now);
+        break;
+      case VisualState::WifiError:
+        _effects.showFade(255, 0, 0, 80, 0, 0, kErrorFadeDurationMs, now);
+        break;
+      case VisualState::CardDetected:
+        _effects.showSolidColor(255, 255, 255, now);
+        break;
+      case VisualState::CardScanning:
+        _effects.showComet(255, 255, 255,
+                           kTailPrimaryFactor, kTailSecondaryFactor,
+                           CometEffect::Direction::Clockwise,
+                           kCardSpinnerIntervalMs, now);
+        break;
+      case VisualState::BackendSuccess:
+        _effects.snakeEffect().setInterval(kSuccessSpinIntervalMs);
+        _effects.showSnake(0, 255, 0, now);
+        break;
+      case VisualState::BackendError:
+        _effects.showFade(255, 0, 0, 0, 0, 0, kErrorFadeDurationMs, now);
+        break;
+      case VisualState::MdnsResolving:
+        _effects.showComet(0, 128, 255,
+                           kTailPrimaryFactor, kTailSecondaryFactor,
+                           CometEffect::Direction::Clockwise,
+                           kWifiCometIntervalMs, now);
+        break;
+      case VisualState::MdnsSuccess:
+        _effects.showSolidColor(0, 64, 0, now);
+        break;
+      case VisualState::MdnsError:
+        _effects.showFade(255, 32, 32, 0, 0, 0, kErrorFadeDurationMs, now);
+        break;
+    }
+  }
+
+  EffectManager &_effects;
+  VisualState _baseState = VisualState::WifiConnecting;
+  VisualState _currentState = VisualState::WifiConnecting;
+  unsigned long _stateChangedAt = 0;
+  bool _backendPending = false;
+  bool _initialized = false;
+};
+
+static VisualStateController visualState(effects);
 static bool wifiPreviouslyConnected = false;
 static constexpr UBaseType_t MDNS_QUERY_TASK_PRIORITY = 1;
 static constexpr uint16_t MDNS_QUERY_TASK_STACK_SIZE = 4096;
@@ -86,7 +242,6 @@ static unsigned long mdnsQueryStartedAt = 0;
 
 static bool scheduleMdnsQueryTask(const String &hostname, unsigned long now);
 static void mdnsQueryTask(void *param);
-static bool isCardFlowState(VisualState state);
 static void setVisualState(VisualState state, unsigned long now);
 
 static void resetMdnsQueryState() {
@@ -101,7 +256,7 @@ static void resetMdnsQueryState() {
 }
 
 static void showMdnsVisualState(VisualState state, unsigned long now) {
-  if (!isCardFlowState(currentVisualState)) {
+  if (!VisualStateController::isCardFlowState(visualState.currentState())) {
     setVisualState(state, now);
   }
 }
@@ -169,137 +324,20 @@ static void mdnsQueryTask(void *param) {
   vTaskDelete(nullptr);
 }
 
-static bool isCardFlowState(VisualState state) {
-  return state == VisualState::CardDetected || state == VisualState::BackendSuccess ||
-         state == VisualState::BackendError;
-}
-
-static bool isTransientState(VisualState state) {
-  return isCardFlowState(state) || state == VisualState::MdnsSuccess ||
-         state == VisualState::MdnsError;
-}
-
-static const char *visualStateName(VisualState state) {
-  switch (state) {
-    case VisualState::Idle:
-      return "Idle";
-    case VisualState::WifiConnecting:
-      return "WifiConnecting";
-    case VisualState::WifiConnected:
-      return "WifiConnected";
-    case VisualState::WifiError:
-      return "WifiError";
-    case VisualState::CardDetected:
-      return "CardDetected";
-    case VisualState::CardScanning:
-      return "CardScanning";
-    case VisualState::BackendSuccess:
-      return "BackendSuccess";
-    case VisualState::BackendError:
-      return "BackendError";
-    case VisualState::MdnsResolving:
-      return "MdnsResolving";
-    case VisualState::MdnsSuccess:
-      return "MdnsSuccess";
-    case VisualState::MdnsError:
-      return "MdnsError";
-  }
-  return "Unknown";
-}
-
-static void applyVisualState(VisualState state, unsigned long now) {
-  switch (state) {
-    case VisualState::Idle:
-      effects.showSolidColor(0, 0, 0, now);
-      break;
-    case VisualState::WifiConnecting:
-      effects.showComet(0, 0, 255,
-                        kTailPrimaryFactor, kTailSecondaryFactor,
-                        CometEffect::Direction::Clockwise,
-                        kWifiCometIntervalMs, now);
-      break;
-    case VisualState::WifiConnected:
-      effects.breathingEffect().setPeriod(1500);
-      effects.showBreathing(0, 128, 255, now);
-      break;
-    case VisualState::WifiError:
-      effects.showFade(255, 0, 0, 80, 0, 0, kErrorFadeDurationMs, now);
-      break;
-    case VisualState::CardDetected:
-      effects.showSolidColor(255, 255, 255, now);
-      break;
-    case VisualState::CardScanning:
-      effects.showComet(255, 255, 255,
-                        kTailPrimaryFactor, kTailSecondaryFactor,
-                        CometEffect::Direction::Clockwise,
-                        kCardSpinnerIntervalMs, now);
-      break;
-    case VisualState::BackendSuccess:
-      effects.snakeEffect().setInterval(kSuccessSpinIntervalMs);
-      effects.showSnake(0, 255, 0, now);
-      break;
-    case VisualState::BackendError:
-      effects.showFade(255, 0, 0, 0, 0, 0, kErrorFadeDurationMs, now);
-      break;
-    case VisualState::MdnsResolving:
-      effects.showComet(0, 128, 255,
-                        kTailPrimaryFactor, kTailSecondaryFactor,
-                        CometEffect::Direction::Clockwise,
-                        kWifiCometIntervalMs, now);
-      break;
-    case VisualState::MdnsSuccess:
-      effects.showSolidColor(0, 64, 0, now);
-      break;
-    case VisualState::MdnsError:
-      effects.showFade(255, 32, 32, 0, 0, 0, kErrorFadeDurationMs, now);
-      break;
-  }
-}
-
 static void setVisualState(VisualState state, unsigned long now) {
-  if (visualStateInitialized && currentVisualState == state) {
-    return;
-  }
-  if (currentVisualState != state) {
-    Serial.printf("[State] Transitioning from %s to %s at %lums\n",
-                  visualStateName(currentVisualState), visualStateName(state), now);
-  }
-  currentVisualState = state;
-  visualStateChangedAt = now;
-  visualStateInitialized = true;
-  applyVisualState(state, now);
+  visualState.setState(state, now);
 }
 
 static void setBaseVisualState(VisualState state, unsigned long now) {
-  baseVisualState = state;
-  bool shouldApply = !isTransientState(currentVisualState) || currentVisualState == state;
-  if (currentVisualState == VisualState::CardScanning && pendingBackendRequest) {
-    shouldApply = false;
-  }
-  if (shouldApply) {
-    setVisualState(state, now);
-  }
+  visualState.setBaseState(state, now);
 }
 
 static void refreshVisualState(unsigned long now) {
-  if (isTransientState(currentVisualState) &&
-      now - visualStateChangedAt >= TRANSIENT_EFFECT_DURATION_MS) {
-    if (pendingBackendRequest) {
-      setVisualState(VisualState::CardScanning, now);
-    } else {
-      setVisualState(baseVisualState, now);
-    }
-  }
+  visualState.refresh(now);
 }
 
 static void updateWifiVisualState(bool isConnected, unsigned long now) {
-  VisualState target = VisualState::WifiConnecting;
-  if (isConnected) {
-    target = VisualState::WifiConnected;
-  } else if (visualStateInitialized && wifiPreviouslyConnected) {
-    target = VisualState::WifiError;
-  }
-  setBaseVisualState(target, now);
+  visualState.updateWifiState(isConnected, wifiPreviouslyConnected, now);
 }
 
 // Variables to handle debouncing of repeated card reads
@@ -366,16 +404,15 @@ static CardProcessResult startBackendRequest(const String &uid) {
     return CardProcessResult::WifiDisconnected;
   }
 
-  if (pendingBackendRequest || backend.isBusy()) {
+  if (visualState.isBackendPending() || backend.isBusy()) {
     Serial.println("[Backend] Request already in progress. Ignoring new card.");
     return CardProcessResult::BackendBusy;
   }
 
   Serial.println("Starting asynchronous request to backend...");
   if (backend.beginPostPlayAsync(uid)) {
-    pendingBackendRequest = true;
     unsigned long now = millis();
-    setVisualState(VisualState::CardScanning, now);
+    visualState.onBackendRequestStarted(now);
     return CardProcessResult::BackendPending;
   }
 
@@ -386,14 +423,12 @@ static CardProcessResult startBackendRequest(const String &uid) {
 }
 
 static void handleBackendCompletion(bool success, unsigned long now) {
-  pendingBackendRequest = false;
   if (success) {
     Serial.println("[SUCCESS] Backend request successful");
-    setVisualState(VisualState::BackendSuccess, now);
   } else {
     Serial.println("[ERROR] Backend request failed");
-    setVisualState(VisualState::BackendError, now);
   }
+  visualState.onBackendRequestFinished(success, now);
   Serial.println("*** END CARD PROCESSING ***\n");
 }
 
@@ -755,35 +790,19 @@ void loop() {
   // Try to read a card
   String uid;
   bool cardRead = false;
-  if (!isCardFlowState(currentVisualState)) {
+  if (!VisualStateController::isCardFlowState(visualState.currentState())) {
     cardRead = rfid.readCard(uid);
   }
-  
-  if (cardRead) {
-    Serial.println("*** CARD DETECTED ***");
-    Serial.printf("Raw UID: %s (length: %d)\n", uid.c_str(), uid.length());
-    now = millis();
-    bool isDuplicate = uid == lastUid && (now - lastReadTime) < CARD_DEBOUNCE_MS;
-    if (isDuplicate) {
-      Serial.printf("[DEBOUNCE] Ignoring repeated read (last read %lu ms ago)\n",
-                    now - lastReadTime);
-    } else {
-      lastUid = uid;
-      lastReadTime = now;
-      Serial.printf("Card accepted: UID=%s\n", uid.c_str());
-      setVisualState(VisualState::CardDetected, now);
 
-      startBackendRequest(uid);
-      Serial.println("*** END CARD PROCESSING ***\n");
-    }
+  if (cardRead) {
+    now = millis();
+    processCardUid(uid, now, false, true);
   }
 
-  if (pendingBackendRequest) {
-    bool success = false;
-    if (backend.pollResult(success)) {
-      now = millis();
-      handleBackendCompletion(success, now);
-    }
+  bool success = false;
+  if (backend.pollResult(success)) {
+    now = millis();
+    handleBackendCompletion(success, now);
   }
 
   now = millis();
