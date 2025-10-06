@@ -231,8 +231,8 @@ bool begin() override {
     std::array<uint8_t, 10> uid{};
     uint8_t uidLength = 0;
 
-    bool success =
-        _pn532.readDetectedPassiveTargetID(PN532_MIFARE_ISO14443A, uid.data(), &uidLength);
+    bool success = _pn532.readDetectedPassiveTargetID(uid.data(), &uidLength);
+
     if (!success) {
       if (now - _lastDetectionCommandMs >= PN532_ASYNC_RESPONSE_TIMEOUT_MS) {
         _awaitingPassiveTarget = false;
