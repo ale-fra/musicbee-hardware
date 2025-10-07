@@ -12,6 +12,11 @@
 
 #include <Arduino.h>
 #include "secrets.h"
+#include "ActionCards.h"
+
+#ifndef SECRET_RESET_CARD_UID
+#  define SECRET_RESET_CARD_UID ""
+#endif
 
 // Wi‑Fi credentials are provided by secrets.h via SECRET_WIFI_SSID and
 // SECRET_WIFI_PASSWORD. If you wish to configure a fallback SSID or
@@ -102,3 +107,18 @@ static constexpr unsigned long OTA_HTTP_TIMEOUT_MS = 10000;
 
 
 // Legacy discrete RGB LED configuration removed; use the NeoPixel strip instead.
+
+// -----------------------------------------------------------------------------
+// Action card configuration
+// -----------------------------------------------------------------------------
+// Map special NFC cards to firmware actions. Leave the string empty to disable
+// a specific card. Additional entries can be added to the initializer list to
+// support more command cards in the future.
+static constexpr ActionCardEntry ACTION_CARD_MAPPINGS[] = {
+#if defined(SECRET_RESET_CARD_UID) && (sizeof(SECRET_RESET_CARD_UID) > 1)
+    {SECRET_RESET_CARD_UID, ActionCardType::Reset},
+#endif
+};
+
+static constexpr size_t ACTION_CARD_MAPPING_COUNT =
+    sizeof(ACTION_CARD_MAPPINGS) / sizeof(ACTION_CARD_MAPPINGS[0]);
