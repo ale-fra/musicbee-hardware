@@ -72,56 +72,125 @@ void OtaUpdater::checkForUpdates() {
 
 bool OtaUpdater::fetchManifest(String &versionOut, String &firmwareUrlOut,
                                String &resolvedHostOut) {
+  Serial.println("[OTA] ========== MANIFEST FETCH START ==========");
+  
+  // Resolve hostname
+  Serial.printf("[OTA] Resolving hostname: %s\n", BACKEND_HOST);
   if (!BackendClient::resolveHostname(String(BACKEND_HOST), resolvedHostOut)) {
+    Serial.println("[OTA] ERROR: Hostname resolution failed");
     return false;
   }
+  Serial.printf("[OTA] Resolved to: %s\n", resolvedHostOut.c_str());
 
+  // Setup HTTP client
   WiFiClient netClient;
-  netClient.setTimeout(OTA_HTTP_TIMEOUT_MS > 0 ? OTA_HTTP_TIMEOUT_MS :
-                                                   kDefaultManifestTimeoutMs);
+  unsigned long timeout = OTA_HTTP_TIMEOUT_MS > 0 ? OTA_HTTP_TIMEOUT_MS : kDefaultManifestTimeoutMs;
+  Serial.printf("[OTA] Setting network timeout: %lu ms\n", timeout);
+  netClient.setTimeout(timeout);
+  
   HttpClient httpClient(netClient, resolvedHostOut.c_str(), BACKEND_PORT);
-  httpClient.setTimeout(OTA_HTTP_TIMEOUT_MS > 0 ? OTA_HTTP_TIMEOUT_MS :
-                                                kDefaultManifestTimeoutMs);
+  httpClient.setTimeout(timeout);
+  Serial.printf("[OTA] HttpClient configured for %s:%d\n", resolvedHostOut.c_str(), BACKEND_PORT);
 
+  // Build manifest path
   String manifestPath = String(BACKEND_API_PREFIX) + OTA_MANIFEST_PATH;
+  Serial.printf("[OTA] Requesting: %s\n", manifestPath.c_str());
+  Serial.printf("[OTA] Full URL: http://%s:%d%s\n", resolvedHostOut.c_str(), BACKEND_PORT, manifestPath.c_str());
+
+  // Make the request
+  Serial.println("[OTA] Sending GET request...");
   int statusCode = httpClient.get(manifestPath);
   if (statusCode < 0) {
-    Serial.printf("[OTA] HTTP connection failed: %d\n", statusCode);
+    Serial.printf("[OTA] ERROR: HTTP connection failed with code: %d\n", statusCode);
+    httpClient.stop();
+    return false;
+  }
+  Serial.printf("[OTA] Connection status code: %d\n", statusCode);
+
+  // Get response code
+  int responseCode = httpClient.responseStatusCode();
+  Serial.printf("[OTA] HTTP response code: %d\n", responseCode);
+  
+  if (responseCode != 200) {
+    Serial.printf("[OTA] ERROR: Unexpected response code: %d\n", responseCode);
     httpClient.stop();
     return false;
   }
 
-  int responseCode = httpClient.responseStatusCode();
+  // Read response body
+  Serial.println("[OTA] Reading response body...");
   String responseBody = httpClient.responseBody();
   httpClient.stop();
-
-  if (responseCode != 200) {
-    Serial.printf("[OTA] Manifest request returned HTTP %d\n", responseCode);
-    return false;
-  }
-
+  
+  Serial.printf("[OTA] Response body length: %d bytes\n", responseBody.length());
+  
   if (responseBody.length() == 0) {
-    Serial.println("[OTA] Manifest body was empty.");
+    Serial.println("[OTA] ERROR: Response body is empty");
     return false;
   }
+  
+  // Print the raw response (truncate if too long)
+  if (responseBody.length() <= 200) {
+    Serial.printf("[OTA] Response body: '%s'\n", responseBody.c_str());
+  } else {
+    Serial.printf("[OTA] Response body (first 200 chars): '%s...'\n", responseBody.substring(0, 200).c_str());
+  }
+  
+  // Print hex dump of first 50 bytes to check for hidden characters
+  Serial.print("[OTA] Response hex (first 50 bytes): ");
+  for (size_t i = 0; i < min((size_t)50, (size_t)responseBody.length()); i++) {
+    Serial.printf("%02X ", (unsigned char)responseBody[i]);
+  }
+  Serial.println();
 
+  // Parse JSON
+  Serial.println("[OTA] Parsing JSON...");
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, responseBody);
+  
   if (err) {
-    Serial.printf("[OTA] Failed to parse manifest JSON: %s\n",
-                  err.c_str());
+    Serial.printf("[OTA] ERROR: JSON parsing failed: %s\n", err.c_str());
+    Serial.printf("[OTA] Error code: %d\n", (int)err.code());
     return false;
   }
+  
+  Serial.println("[OTA] JSON parsed successfully!");
 
-  const char *version = doc["version"] | nullptr;
-  const char *firmwareUrl = doc["firmware_url"] | nullptr;
+  // Check for required fields (ArduinoJson v7 style)
+  bool hasVersion = !doc["version"].isNull();
+  bool hasFirmwareUrl = !doc["firmware_url"].isNull();
+  
+  Serial.printf("[OTA] Field 'version' present: %s\n", hasVersion ? "YES" : "NO");
+  Serial.printf("[OTA] Field 'firmware_url' present: %s\n", hasFirmwareUrl ? "YES" : "NO");
+
+  // Try to extract fields (ArduinoJson v7 style)
+  const char *version = doc["version"].as<const char*>();
+  const char *firmwareUrl = doc["firmware_url"].as<const char*>();
+  
+  Serial.printf("[OTA] version pointer: %s\n", version ? "NOT NULL" : "NULL");
+  Serial.printf("[OTA] firmwareUrl pointer: %s\n", firmwareUrl ? "NOT NULL" : "NULL");
+  
+  if (version != nullptr) {
+    Serial.printf("[OTA] version value: '%s'\n", version);
+  }
+  
+  if (firmwareUrl != nullptr) {
+    Serial.printf("[OTA] firmwareUrl value: '%s'\n", firmwareUrl);
+  }
+  
+  // Final check
   if (version == nullptr || firmwareUrl == nullptr) {
-    Serial.println("[OTA] Manifest missing required fields.");
+    Serial.println("[OTA] ERROR: Missing required fields");
+    if (version == nullptr) Serial.println("[OTA]   - 'version' is null");
+    if (firmwareUrl == nullptr) Serial.println("[OTA]   - 'firmware_url' is null");
     return false;
   }
 
   versionOut = version;
   firmwareUrlOut = firmwareUrl;
+  
+  Serial.println("[OTA] Manifest fetch successful!");
+  Serial.println("[OTA] ========== MANIFEST FETCH END ==========");
   return true;
 }
 
@@ -346,4 +415,3 @@ int OtaUpdater::compareVersions(const String &lhs, const String &rhs) {
 
   return 0;
 }
-
