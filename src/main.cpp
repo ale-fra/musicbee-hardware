@@ -33,10 +33,10 @@ namespace {
 constexpr float kTailPrimaryFactor = 0.5f;
 constexpr float kTailSecondaryFactor = 0.2f;
 constexpr unsigned long kWifiCometIntervalMs = 40;
-constexpr unsigned long kCardSpinnerIntervalMs = 40;
 constexpr unsigned long kSuccessSpinIntervalMs = 28;
 constexpr unsigned long kErrorFadeDurationMs = 300;
 constexpr unsigned long kTransientEffectDurationMs = 2500;
+constexpr unsigned long kCardRainbowIntervalMs = 15;
 }
 
 enum class VisualState {
@@ -175,13 +175,10 @@ private:
         _effects.showFade(255, 0, 0, 80, 0, 0, kErrorFadeDurationMs, now);
         break;
       case VisualState::CardDetected:
-        _effects.showSolidColor(255, 255, 255, now);
+        _effects.showRainbow(kCardRainbowIntervalMs, now);
         break;
       case VisualState::CardScanning:
-        _effects.showComet(255, 255, 255,
-                           kTailPrimaryFactor, kTailSecondaryFactor,
-                           CometEffect::Direction::Clockwise,
-                           kCardSpinnerIntervalMs, now);
+        _effects.showRainbow(kCardRainbowIntervalMs, now);
         break;
       case VisualState::BackendSuccess:
         _effects.snakeEffect().setInterval(kSuccessSpinIntervalMs);

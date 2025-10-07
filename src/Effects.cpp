@@ -392,3 +392,71 @@ void BreathingEffect::applyIntensity(float intensity) {
   strip().apply();
 }
 
+RainbowEffect::RainbowEffect(unsigned long intervalMs)
+    : _intervalMs(intervalMs == 0 ? 1 : intervalMs), _lastStep(0), _offset(0) {}
+
+void RainbowEffect::setInterval(unsigned long intervalMs) {
+  _intervalMs = intervalMs == 0 ? 1 : intervalMs;
+}
+
+void RainbowEffect::begin(unsigned long now) {
+  _lastStep = now;
+  _offset = 0;
+  draw();
+}
+
+void RainbowEffect::update(unsigned long now) {
+  uint16_t count = ledCount();
+  if (count == 0) {
+    _lastStep = now;
+    draw();
+    return;
+  }
+
+  unsigned long interval = _intervalMs == 0 ? 1 : _intervalMs;
+  unsigned long elapsed = now - _lastStep;
+  if (elapsed < interval) {
+    return;
+  }
+
+  unsigned long steps = elapsed / interval;
+  if (steps == 0) {
+    steps = 1;
+  }
+
+  _lastStep += steps * interval;
+  uint8_t stepOffset = static_cast<uint8_t>(steps & 0xFFUL);
+  _offset = static_cast<uint8_t>(_offset + stepOffset);
+  draw();
+}
+
+void RainbowEffect::draw() {
+  uint16_t count = ledCount();
+  if (count == 0) {
+    strip().setAll(strip().color(0, 0, 0));
+    strip().apply();
+    return;
+  }
+
+  for (uint16_t i = 0; i < count; ++i) {
+    uint8_t position = static_cast<uint8_t>((i * 256 / count) + _offset);
+    strip().setPixel(i, wheel(position));
+  }
+  strip().apply();
+}
+
+uint32_t RainbowEffect::wheel(uint8_t position) {
+  if (position < 85) {
+    uint8_t scaled = static_cast<uint8_t>(position * 3);
+    return strip().color(static_cast<uint8_t>(255 - scaled), scaled, 0);
+  }
+  if (position < 170) {
+    uint8_t adjusted = static_cast<uint8_t>(position - 85);
+    uint8_t scaled = static_cast<uint8_t>(adjusted * 3);
+    return strip().color(0, static_cast<uint8_t>(255 - scaled), scaled);
+  }
+  uint8_t adjusted = static_cast<uint8_t>(position - 170);
+  uint8_t scaled = static_cast<uint8_t>(adjusted * 3);
+  return strip().color(scaled, 0, static_cast<uint8_t>(255 - scaled));
+}
+

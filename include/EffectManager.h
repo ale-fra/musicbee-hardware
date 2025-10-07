@@ -27,6 +27,7 @@ public:
   void showFade(uint8_t startRed, uint8_t startGreen, uint8_t startBlue,
                 uint8_t endRed, uint8_t endGreen, uint8_t endBlue,
                 unsigned long durationMs, unsigned long now);
+  void showRainbow(unsigned long intervalMs, unsigned long now);
 
   void setBrightness(uint8_t brightness);
   uint8_t brightness() const { return _brightness; }
@@ -39,6 +40,7 @@ public:
   BreathingEffect &breathingEffect() { return _breathingEffect; }
   CometEffect &cometEffect() { return _cometEffect; }
   FadeEffect &fadeEffect() { return _fadeEffect; }
+  RainbowEffect &rainbowEffect() { return _rainbowEffect; }
 
 private:
   void activateEffect(Effect &effect, unsigned long now);
@@ -52,5 +54,6 @@ private:
   BreathingEffect _breathingEffect;
   CometEffect _cometEffect;
   FadeEffect _fadeEffect;
+  RainbowEffect _rainbowEffect;
 };
 
