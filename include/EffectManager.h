@@ -28,6 +28,7 @@ public:
                 uint8_t endRed, uint8_t endGreen, uint8_t endBlue,
                 unsigned long durationMs, unsigned long now);
   void showRainbow(unsigned long intervalMs, unsigned long now);
+  void turnOff(unsigned long now);
 
   void setBrightness(uint8_t brightness);
   uint8_t brightness() const { return _brightness; }

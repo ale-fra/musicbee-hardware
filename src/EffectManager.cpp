@@ -99,6 +99,14 @@ void EffectManager::showRainbow(unsigned long intervalMs, unsigned long now) {
   activateEffect(_rainbowEffect, now);
 }
 
+void EffectManager::turnOff(unsigned long now) {
+  uint32_t off = _strip.color(0, 0, 0);
+  _strip.setAll(off);
+  _strip.apply();
+  _activeEffect = nullptr;
+  Serial.printf("[Effects] Strip turned off at %lums\n", now);
+}
+
 void EffectManager::setBrightness(uint8_t brightness) {
   _brightness = brightness;
   _strip.setBrightness(brightness);

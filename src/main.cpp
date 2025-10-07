@@ -98,7 +98,7 @@ public:
   void updateWifiState(bool isConnected, bool wasPreviouslyConnected, unsigned long now) {
     VisualState target = VisualState::WifiConnecting;
     if (isConnected) {
-      target = VisualState::WifiConnected;
+      target = VisualState::Idle;
     } else if (_initialized && wasPreviouslyConnected) {
       target = VisualState::WifiError;
     }
@@ -159,7 +159,7 @@ private:
   void applyState(VisualState state, unsigned long now) {
     switch (state) {
       case VisualState::Idle:
-        _effects.showSolidColor(0, 0, 0, now);
+        _effects.turnOff(now);
         break;
       case VisualState::WifiConnecting:
         _effects.showComet(0, 0, 255,
@@ -168,8 +168,7 @@ private:
                            kWifiCometIntervalMs, now);
         break;
       case VisualState::WifiConnected:
-        _effects.breathingEffect().setPeriod(1500);
-        _effects.showBreathing(0, 128, 255, now);
+        _effects.turnOff(now);
         break;
       case VisualState::WifiError:
         _effects.showFade(255, 0, 0, 80, 0, 0, kErrorFadeDurationMs, now);
@@ -442,6 +441,10 @@ static bool parseVisualState(const String &value, VisualState &state) {
   }
   if (normalized == "wifi_connected") {
     state = VisualState::WifiConnected;
+    return true;
+  }
+  if (normalized == "idle") {
+    state = VisualState::Idle;
     return true;
   }
   if (normalized == "wifi_error") {
