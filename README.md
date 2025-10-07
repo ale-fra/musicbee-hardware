@@ -9,6 +9,7 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 - Automatic OTA firmware checks on boot and every 24 hours with manifest-driven updates.
 - RGB status LED with success, error, and connectivity feedback patterns.
 - Optional debug HTTP server for remote visual testing and simulated card scans.
+- Configurable NFC command cards for local actions such as resetting the device.
 
 ## Hardware Requirements
 - ESP32 development board (tested with AZ-Delivery Devkit V4).
@@ -43,8 +44,8 @@ MusicBee turns NFC cards into kid-friendly controls for a Google Nest or other n
 - Set `LED_COMMON_ANODE` in `Config.h` if you use a common-anode LED.
 
 ## Firmware Configuration
-1. Copy `include/secrets.example.h` to `include/secrets.h` and fill in Wi-Fi credentials plus backend host/port constants.
-2. Adjust `Config.h` if you change reader type, pin assignments, debounce timing, LED configuration, or enable the debug action server (`ENABLE_DEBUG_ACTIONS` / `DEBUG_SERVER_PORT`).
+1. Copy `include/secrets.example.h` to `include/secrets.h` and fill in Wi-Fi credentials plus backend host/port constants. Optionally set `SECRET_RESET_CARD_UID` to the uppercase UID of a command card that should reboot the device.
+2. Adjust `Config.h` if you change reader type, pin assignments, debounce timing, LED configuration, or enable the debug action server (`ENABLE_DEBUG_ACTIONS` / `DEBUG_SERVER_PORT`). Additional command cards can be added to `ACTION_CARD_MAPPINGS`.
 
 ## Build and Flash
 1. Install PlatformIO.

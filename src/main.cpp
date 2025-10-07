@@ -13,6 +13,7 @@
 #include <freertos/task.h>
 
 #include "Config.h"
+#include "ActionCards.h"
 #include "WifiManager.h"
 #include "RfidReader.h"
 #include "BackendClient.h"
@@ -28,6 +29,7 @@ static RfidReader rfid;
 static BackendClient backend;
 static EffectManager effects(LED_DATA_PIN, LED_COUNT_DEFAULT, LED_BRIGHTNESS_DEFAULT);
 static OtaUpdater otaUpdater;
+static ActionCardRegistry actionCards(ACTION_CARD_MAPPINGS, ACTION_CARD_MAPPING_COUNT);
 
 namespace {
 constexpr float kTailPrimaryFactor = 0.5f;
@@ -354,11 +356,14 @@ enum class CardProcessResult {
   BackendPending,
   BackendFailure,
   WifiDisconnected,
-  BackendBusy
+  BackendBusy,
+  ActionHandled
 };
 
 static void handleBackendCompletion(bool success, unsigned long now);
 static CardProcessResult startBackendRequest(const String &uid);
+static bool handleActionCard(const ActionCardEntry &entry, unsigned long now);
+static const char *actionCardName(ActionCardType type);
 
 static CardProcessResult processCardUid(const String &uid, unsigned long now,
                                        bool bypassDebounce, bool sendToBackend) {
@@ -385,6 +390,17 @@ static CardProcessResult processCardUid(const String &uid, unsigned long now,
     setVisualState(VisualState::BackendSuccess, updatedNow);
     Serial.println("*** END CARD PROCESSING ***\n");
     return CardProcessResult::BackendSkipped;
+  }
+
+  const ActionCardEntry *actionEntry = actionCards.findByUid(uid);
+  if (actionEntry != nullptr) {
+    Serial.printf("[ActionCard] Matched %s command card.\n",
+                  actionCardName(actionEntry->type));
+    if (handleActionCard(*actionEntry, now)) {
+      Serial.println("*** END CARD PROCESSING ***\n");
+      return CardProcessResult::ActionHandled;
+    }
+    Serial.println("[ActionCard] No handler executed for this command card.");
   }
 
   CardProcessResult backendResult = startBackendRequest(uid);
@@ -418,6 +434,31 @@ static CardProcessResult startBackendRequest(const String &uid) {
   unsigned long now = millis();
   setVisualState(VisualState::BackendError, now);
   return CardProcessResult::BackendFailure;
+}
+
+static const char *actionCardName(ActionCardType type) {
+  switch (type) {
+    case ActionCardType::Reset:
+      return "reset";
+  }
+  return "unknown";
+}
+
+static bool handleActionCard(const ActionCardEntry &entry, unsigned long now) {
+  switch (entry.type) {
+    case ActionCardType::Reset: {
+      Serial.println("[ActionCard] Reset command received. Rebooting device...");
+      setVisualState(VisualState::BackendSuccess, now);
+      effects.update(now);
+      Serial.flush();
+      delay(250);
+      ESP.restart();
+      return true;
+    }
+  }
+
+  Serial.println("[ActionCard] Handler not implemented for this action type.");
+  return false;
 }
 
 static void handleBackendCompletion(bool success, unsigned long now) {
@@ -610,6 +651,9 @@ static bool handleSimulateCard(JsonVariantConst payload, String &message) {
     case CardProcessResult::BackendBusy:
       message = "Backend request already in progress.";
       return false;
+    case CardProcessResult::ActionHandled:
+      message = "Command card executed successfully.";
+      return true;
   }
 
   message = "Unknown result.";
@@ -708,6 +752,8 @@ void setup() {
   Serial.println("Initializing LED strip...");
   unsigned long now = millis();
   effects.begin(now);
+  Serial.printf("[ActionCard] %u command card(s) configured.\n",
+                static_cast<unsigned>(ACTION_CARD_MAPPING_COUNT));
   setVisualState(VisualState::WifiConnecting, now);
 
   // Connect to Wi-Fi

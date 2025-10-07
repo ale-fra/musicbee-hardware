@@ -21,3 +21,9 @@
 // SECRET_BACKEND_PORT as 3000.
 #define SECRET_BACKEND_HOST   "musicbee.local"
 #define SECRET_BACKEND_PORT   8080
+
+// Optional: UID for the reset command card. Provide the uppercase hexadecimal
+// UID exactly as read by the firmware. Leave the string empty to disable the
+// reset card.
+#define SECRET_RESET_CARD_UID ""
+
