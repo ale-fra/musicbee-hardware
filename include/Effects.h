@@ -153,3 +153,21 @@ private:
   unsigned long _startTime;
 };
 
+class RainbowEffect : public Effect {
+public:
+  RainbowEffect(unsigned long intervalMs = 20UL);
+
+  void setInterval(unsigned long intervalMs);
+
+  void begin(unsigned long now) override;
+  void update(unsigned long now) override;
+
+private:
+  void draw();
+  uint32_t wheel(uint8_t position);
+
+  unsigned long _intervalMs;
+  unsigned long _lastStep;
+  uint8_t _offset;
+};
+

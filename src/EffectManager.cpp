@@ -11,7 +11,8 @@ EffectManager::EffectManager(uint8_t dataPin, uint16_t ledCount, uint8_t default
       _snakeEffect(),
       _breathingEffect(),
       _cometEffect(),
-      _fadeEffect() {}
+      _fadeEffect(),
+      _rainbowEffect() {}
 
 void EffectManager::begin(unsigned long now) {
   (void)now;
@@ -90,6 +91,20 @@ void EffectManager::showFade(uint8_t startRed, uint8_t startGreen, uint8_t start
                 endBlue,
                 durationMs);
   activateEffect(_fadeEffect, now);
+}
+
+void EffectManager::showRainbow(unsigned long intervalMs, unsigned long now) {
+  _rainbowEffect.setInterval(intervalMs);
+  Serial.printf("[Effects] Activating Rainbow (interval %lums)\n", intervalMs);
+  activateEffect(_rainbowEffect, now);
+}
+
+void EffectManager::turnOff(unsigned long now) {
+  uint32_t off = _strip.color(0, 0, 0);
+  _strip.setAll(off);
+  _strip.apply();
+  _activeEffect = nullptr;
+  Serial.printf("[Effects] Strip turned off at %lums\n", now);
 }
 
 void EffectManager::setBrightness(uint8_t brightness) {
